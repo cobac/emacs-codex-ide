@@ -259,11 +259,13 @@ When KILL-LOG-BUFFER is non-nil, also kill SESSION's log buffer."
       (codex-ide-renderer-insert-session-header working-dir))))
 
 (cl-defun codex-ide--create-process-session-internal
-    (&key reuse-buffer reuse-name-suffix query-only)
+    (&key reuse-buffer reuse-name-suffix query-only working-dir)
   "Create a new app-server-backed session for the current working directory.
 When QUERY-ONLY is non-nil, create a headless session used only for
-protocol requests such as thread listing."
-  (let ((working-dir (codex-ide--get-working-directory)))
+protocol requests such as thread listing.  When WORKING-DIR is non-nil,
+use it directly instead of inferring a project root."
+  (let ((working-dir (codex-ide--normalize-directory
+                      (or working-dir (codex-ide--get-working-directory)))))
     (let* ((process-environment
             (codex-ide--app-server-process-environment process-environment))
            (name-suffix (cond
@@ -306,15 +308,16 @@ protocol requests such as thread listing."
                    :noquery t
                    :filter #'codex-ide--stderr-filter))
             (codex-ide--discard-process-buffer stderr-process)
-            (setq process
-                  (make-process
-                   :name (format "codex-ide[%s]" process-label)
-                   :buffer nil
-                   :command (codex-ide--app-server-command)
-                   :coding 'utf-8-unix
-                   :filter #'codex-ide--process-filter
-                   :sentinel #'codex-ide--process-sentinel
-                   :stderr stderr-process))
+            (let ((default-directory (file-name-as-directory working-dir)))
+              (setq process
+                    (make-process
+                     :name (format "codex-ide[%s]" process-label)
+                     :buffer nil
+                     :command (codex-ide--app-server-command)
+                     :coding 'utf-8-unix
+                     :filter #'codex-ide--process-filter
+                     :sentinel #'codex-ide--process-sentinel
+                     :stderr stderr-process)))
             (setf (codex-ide-session-process session) process)
             (setf (codex-ide-session-stderr-process session) stderr-process)
             (process-put process 'codex-session session)
@@ -360,6 +363,10 @@ protocol requests such as thread listing."
   (codex-ide--create-process-session-internal
    :reuse-buffer reuse-buffer
    :reuse-name-suffix reuse-name-suffix))
+
+(defun codex-ide--create-process-session-for-directory (directory)
+  "Create a new app-server-backed session rooted exactly at DIRECTORY."
+  (codex-ide--create-process-session-internal :working-dir directory))
 
 (defun codex-ide--create-query-session ()
   "Create a new query-only session for the current working directory."
@@ -442,28 +449,30 @@ protocol requests such as thread listing."
 
 (defun codex-ide--show-or-resume-thread (thread-id &optional directory)
   "Show THREAD-ID in DIRECTORY, resuming it into a session when needed."
-  (let* ((directory (codex-ide--normalize-directory
-                     (or directory (codex-ide--get-working-directory))))
-         (session (or (codex-ide--session-for-thread-id thread-id directory)
-                      (codex-ide--reusable-idle-session-for-directory directory))))
-    (if session
-        (progn
-          (unless (codex-ide-session-thread-id session)
-            (codex-ide--reset-session-buffer session)
-            (codex-ide--resume-thread-into-session session thread-id "Resumed")
-            (codex-ide--update-header-line session))
-          (codex-ide--show-session-buffer session)
-          (unless (codex-ide--session-metadata-get session :rate-limits)
-            (codex-ide--schedule-usage-refresh session))
-          session)
-      (let ((default-directory directory))
-        (setq session (codex-ide--create-process-session)))
-      (codex-ide--initialize-session session)
-      (codex-ide--resume-thread-into-session session thread-id "Resumed")
-      (codex-ide--update-header-line session)
-      (codex-ide--show-session-buffer session :newly-created t)
-      (codex-ide--schedule-usage-refresh session)
-      session)))
+  (let ((requested-directory (or directory (codex-ide--get-working-directory))))
+    (unless (file-directory-p requested-directory)
+      (user-error "Stored Codex session directory no longer exists: %s"
+                  (abbreviate-file-name requested-directory)))
+    (let* ((directory (codex-ide--normalize-directory requested-directory))
+           (session (or (codex-ide--session-for-thread-id thread-id directory)
+                        (codex-ide--reusable-idle-session-for-directory directory))))
+      (if session
+          (progn
+            (unless (codex-ide-session-thread-id session)
+              (codex-ide--reset-session-buffer session)
+              (codex-ide--resume-thread-into-session session thread-id "Resumed")
+              (codex-ide--update-header-line session))
+            (codex-ide--show-session-buffer session)
+            (unless (codex-ide--session-metadata-get session :rate-limits)
+              (codex-ide--schedule-usage-refresh session))
+            session)
+        (setq session (codex-ide--create-process-session-for-directory directory))
+        (codex-ide--initialize-session session)
+        (codex-ide--resume-thread-into-session session thread-id "Resumed")
+        (codex-ide--update-header-line session)
+        (codex-ide--show-session-buffer session :newly-created t)
+        (codex-ide--schedule-usage-refresh session)
+        session))))
 
 (defun codex-ide--resume-thread-into-session (session thread-id action)
   "Attach SESSION to THREAD-ID and optionally replay prior transcript."
