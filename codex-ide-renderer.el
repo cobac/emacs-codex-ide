@@ -913,23 +913,28 @@ Return a plist containing `:delete-start', `:boundary', and `:end' markers."
 
 (defun codex-ide-renderer-parse-file-link-target (target)
   "Parse markdown file TARGET into (PATH LINE COLUMN), or nil."
-  (let ((normalized (codex-ide-renderer--normalize-file-link-target target)))
-    (cond
-     ((string-match "\\`\\(/[^\n]+\\)#L\\([0-9]+\\)\\(?:C\\([0-9]+\\)\\)?\\'" normalized)
-      (list (codex-ide-renderer--decode-file-link-target
-             (match-string 1 normalized))
-            (string-to-number (match-string 2 normalized))
-            (when-let* ((column (match-string 3 normalized)))
-              (string-to-number column))))
-     ((string-match "\\`\\(/[^\n]+\\):\\([0-9]+\\)\\(?::\\([0-9]+\\)\\)?\\'" normalized)
-      (list (codex-ide-renderer--decode-file-link-target
-             (match-string 1 normalized))
-            (string-to-number (match-string 2 normalized))
-            (when-let* ((column (match-string 3 normalized)))
-              (string-to-number column))))
-     ((string-prefix-p "/" normalized)
-      (list (codex-ide-renderer--decode-file-link-target normalized) nil nil))
-     (t nil))))
+  (when (stringp target)
+    (let ((normalized (codex-ide-renderer--normalize-file-link-target target)))
+      (cond
+       ((string-match "\\`\\(/[^\n]+\\)#L\\([0-9]+\\)\\(?:C\\([0-9]+\\)\\)?\\'" normalized)
+        (let ((path (match-string 1 normalized))
+              (line (match-string 2 normalized))
+              (column (match-string 3 normalized)))
+          (list (codex-ide-renderer--decode-file-link-target path)
+                (string-to-number line)
+                (when column
+                  (string-to-number column)))))
+       ((string-match "\\`\\(/[^\n]+\\):\\([0-9]+\\)\\(?::\\([0-9]+\\)\\)?\\'" normalized)
+        (let ((path (match-string 1 normalized))
+              (line (match-string 2 normalized))
+              (column (match-string 3 normalized)))
+          (list (codex-ide-renderer--decode-file-link-target path)
+                (string-to-number line)
+                (when column
+                  (string-to-number column)))))
+       ((string-prefix-p "/" normalized)
+        (list (codex-ide-renderer--decode-file-link-target normalized) nil nil))
+       (t nil)))))
 
 (defun codex-ide-renderer-open-file-link (&optional _button)
   "Open the file link described by text properties at point."
