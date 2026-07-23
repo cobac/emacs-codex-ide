@@ -311,7 +311,11 @@ The first live session in a workspace uses no suffix."
                     t))
          (used-suffixes
           (mapcar #'codex-ide-session-name-suffix
-                  (seq-remove #'codex-ide--query-only-session-p sessions)))
+                  (seq-remove
+                   (lambda (session)
+                     (or (codex-ide--query-only-session-p session)
+                         (codex-ide--side-session-p session)))
+                   sessions)))
          (suffix nil))
     (while (member suffix used-suffixes)
       (setq suffix (if suffix (1+ suffix) 1)))
@@ -326,6 +330,11 @@ The first live session in a workspace uses no suffix."
   "Return non-nil when SESSION is query-only."
   (and (codex-ide-session-p session)
        (codex-ide-session-query-only session)))
+
+(defun codex-ide--side-session-p (session)
+  "Return non-nil when SESSION is an ephemeral side conversation."
+  (and (codex-ide-session-p session)
+       (codex-ide--session-metadata-get session :side-parent)))
 
 (defun codex-ide--timestamp-now ()
   "Return the current time as a sortable timestamp."
@@ -378,7 +387,9 @@ When LIVE-ONLY is non-nil, only include sessions with live processes."
   "Return the most recently active live Codex session for DIRECTORY."
   (codex-ide--most-recent-session
    (seq-remove
-    #'codex-ide--query-only-session-p
+    (lambda (session)
+      (or (codex-ide--query-only-session-p session)
+          (codex-ide--side-session-p session)))
     (codex-ide--sessions-for-directory
      (or directory (codex-ide--get-working-directory))
      t))))
@@ -387,7 +398,9 @@ When LIVE-ONLY is non-nil, only include sessions with live processes."
   "Return the most recently active live Codex session across all projects."
   (codex-ide--most-recent-session
    (seq-remove
-    #'codex-ide--query-only-session-p
+    (lambda (session)
+      (or (codex-ide--query-only-session-p session)
+          (codex-ide--side-session-p session)))
     (seq-filter #'codex-ide--live-session-p codex-ide--sessions))))
 
 (defun codex-ide--live-session-directories ()

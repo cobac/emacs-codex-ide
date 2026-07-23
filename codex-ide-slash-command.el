@@ -20,6 +20,7 @@
 (autoload 'codex-ide-session-buffer-list "codex-ide-session-buffer-list" nil t)
 (autoload 'codex-ide-session-diff-open "codex-ide-diff-view" nil t)
 (autoload 'codex-ide-loop-jump-or-create "codex-ide-loop" nil t)
+(autoload 'codex-ide-side "codex-ide-side" nil t)
 (autoload 'codex-ide-status "codex-ide-status-mode" nil t)
 (autoload 'codex-ide-submit "codex-ide-transcript" nil t)
 
@@ -45,15 +46,22 @@
      "Set the model and reasoning effort for this session.")
     ("reasoning" codex-ide-slash-command-set-reasoning-effort
      "Set the reasoning effort for this session.")
+    ("side" codex-ide-side
+     "Start an ephemeral side conversation."
+     (:accepts-arguments t :record-transcript nil))
+    ("btw" codex-ide-side
+     "Alias for /side."
+     (:accepts-arguments t :record-transcript nil))
     ("sessions" codex-ide-status "Open the Codex session status buffer."))
   "Slash command registry.
 
-Each entry is a list of the form (NAME COMMAND DESCRIPTION), where NAME is the
+Each entry has the form (NAME COMMAND DESCRIPTION OPTIONS), where NAME is the
 slash command name without its leading slash, COMMAND is an interactive command
-symbol, and DESCRIPTION is shown in completion annotations."
-  :type '(repeat (list (string :tag "Slash command name")
-                       (function :tag "Interactive command")
-                       (string :tag "Description")))
+symbol, DESCRIPTION is shown in completion annotations, and OPTIONS is an
+optional plist.  `:accepts-arguments' permits inline text after the command.
+`:record-transcript' controls whether local command execution is shown in the
+parent transcript and defaults to non-nil."
+  :type '(repeat sexp)
   :group 'codex-ide-slash-command)
 
 (defun codex-ide-slash-command--ensure-core-loop-entry ()
@@ -67,6 +75,27 @@ symbol, and DESCRIPTION is shown in completion annotations."
                   (list codex-ide-slash-command--loop-entry)))))
 
 (codex-ide-slash-command--ensure-core-loop-entry)
+
+(defconst codex-ide-slash-command--side-entries
+  '(("side" codex-ide-side
+     "Start an ephemeral side conversation."
+     (:accepts-arguments t :record-transcript nil))
+    ("btw" codex-ide-side
+     "Alias for /side."
+     (:accepts-arguments t :record-transcript nil)))
+  "Core side-conversation slash command entries.")
+
+(defun codex-ide-slash-command--ensure-side-entries ()
+  "Add side commands when the registry otherwise contains the core defaults."
+  (when (and (assoc "buffers" codex-ide-slash-commands)
+             (assoc "diff" codex-ide-slash-commands)
+             (assoc "sessions" codex-ide-slash-commands))
+    (dolist (entry codex-ide-slash-command--side-entries)
+      (unless (assoc (car entry) codex-ide-slash-commands)
+        (setq codex-ide-slash-commands
+              (append codex-ide-slash-commands (list entry)))))))
+
+(codex-ide-slash-command--ensure-side-entries)
 
 (defun codex-ide-slash-command--current-session ()
   "Return the current Codex session for a slash command."
@@ -126,6 +155,23 @@ symbol, and DESCRIPTION is shown in completion annotations."
   "Return slash command ENTRY's description."
   (nth 2 entry))
 
+(defun codex-ide-slash-command--entry-options (entry)
+  "Return slash command ENTRY's option plist."
+  (let ((options (nth 3 entry)))
+    (and (listp options) options)))
+
+(defun codex-ide-slash-command-entry-accepts-arguments-p (entry)
+  "Return non-nil when slash command ENTRY accepts inline arguments."
+  (plist-get (codex-ide-slash-command--entry-options entry)
+             :accepts-arguments))
+
+(defun codex-ide-slash-command-entry-record-transcript-p (entry)
+  "Return non-nil when slash command ENTRY should be recorded locally."
+  (let ((options (codex-ide-slash-command--entry-options entry)))
+    (if (plist-member options :record-transcript)
+        (plist-get options :record-transcript)
+      t)))
+
 (defun codex-ide-slash-command-names ()
   "Return registered slash command names."
   (mapcar #'codex-ide-slash-command--entry-name codex-ide-slash-commands))
@@ -177,28 +223,38 @@ unrecognized slash commands or unsupported arguments."
                        (codex-ide-slash-command-lookup name))))
       (unless entry
         (user-error "Unrecognized command '%s'" display))
-      (unless (string-empty-p extra)
+      (unless (or (string-empty-p extra)
+                  (codex-ide-slash-command-entry-accepts-arguments-p entry))
         (user-error "Slash command '%s' does not accept arguments" display))
       entry)))
+
+(defun codex-ide-slash-command-prompt-argument (prompt)
+  "Return inline argument text parsed from slash command PROMPT."
+  (when-let* ((parsed (codex-ide-slash-command--parse prompt)))
+    (plist-get parsed :extra)))
 
 (defun codex-ide-slash-command-entry-command (entry)
   "Return slash command ENTRY's interactive command symbol."
   (codex-ide-slash-command--entry-command entry))
 
-(defun codex-ide-slash-command-execute-entry (entry)
-  "Execute slash command ENTRY interactively."
+(defun codex-ide-slash-command-execute-entry (entry &optional argument)
+  "Execute slash command ENTRY, passing its optional inline ARGUMENT."
   (let* ((name (codex-ide-slash-command--entry-name entry))
          (command (codex-ide-slash-command--entry-command entry)))
     (unless (commandp command)
       (user-error "Slash command '/%s' is not currently available" name))
-    (call-interactively command)))
+    (if (codex-ide-slash-command-entry-accepts-arguments-p entry)
+        (funcall command argument)
+      (call-interactively command))))
 
 (defun codex-ide-slash-command-dispatch-prompt (prompt)
   "Dispatch PROMPT as a slash command when applicable.
 Return non-nil when PROMPT was a slash command.  Signal a user error for
-unrecognized slash commands or unsupported arguments."
+  unrecognized slash commands or unsupported arguments."
   (when-let* ((entry (codex-ide-slash-command-resolve-prompt prompt)))
-    (codex-ide-slash-command-execute-entry entry)
+    (codex-ide-slash-command-execute-entry
+     entry
+     (codex-ide-slash-command-prompt-argument prompt))
     t))
 
 (defun codex-ide-slash-command--input-end-position (session)
