@@ -123,6 +123,31 @@
       (setq codex-ide-resume-list--filter "system-only")
       (should-not (codex-ide-resume-list--entries)))))
 
+(ert-deftest codex-ide-resume-list-prefixes-and-filters-by-thread-name ()
+  (let ((thread '((id . "thread-named")
+                  (name . "Persistent buffer")
+                  (cwd . "/tmp/example")
+                  (preview . "Investigate the failing test"))))
+    (with-temp-buffer
+      (codex-ide-resume-list-mode)
+      (setq codex-ide-resume-list--threads (list thread))
+      (let* ((columns (cadr (car (codex-ide-resume-list--entries))))
+             (preview (aref columns 1)))
+        (should (string-prefix-p
+                 "Persistent buffer — Investigate the failing test"
+                 preview))
+        (should (eq (get-text-property 0 'face preview)
+                    'codex-ide-session-list-id-face))
+        (should (eq (get-text-property
+                     (string-match "Investigate" preview)
+                     'face
+                     preview)
+                    'default)))
+      (setq codex-ide-resume-list--filter "persistent buffer")
+      (should (= (length (codex-ide-resume-list--entries)) 1))
+      (setq codex-ide-resume-list--filter "unrelated")
+      (should-not (codex-ide-resume-list--entries)))))
+
 (ert-deftest codex-ide-resume-list-expanded-preview-preserves-lines ()
   (let ((thread '((id . "thread-1")
                   (cwd . "/tmp/example")
@@ -331,6 +356,67 @@
        (equal (alist-get 'cwd
                          (codex-ide--thread-resume-params "thread-1" session))
               session-directory)))))
+
+(ert-deftest codex-ide-set-thread-name-sends-app-server-request ()
+  (let ((captured nil)
+        (session (make-codex-ide-session)))
+    (cl-letf (((symbol-function 'codex-ide--request-sync)
+               (lambda (request-session method params)
+                 (setq captured (list request-session method params))
+                 '())))
+      (codex-ide--set-thread-name session "thread-1" "Persistent buffer"))
+    (should
+     (equal captured
+            (list session
+                  "thread/name/set"
+                  '((threadId . "thread-1")
+                    (name . "Persistent buffer")))))))
+
+(ert-deftest codex-ide-rename-session-buffer-persists-actual-buffer-name ()
+  (let* ((directory temporary-file-directory)
+         (buffer
+          (generate-new-buffer
+           (codex-ide--session-buffer-name directory)))
+         (session
+          (make-codex-ide-session
+           :buffer buffer
+           :directory (codex-ide--normalize-directory directory)
+           :process 'fake-process
+           :thread-id "thread-1"))
+         (captured nil))
+    (unwind-protect
+        (with-current-buffer buffer
+          (setq-local codex-ide--session session)
+          (cl-letf (((symbol-function 'process-live-p)
+                     (lambda (process)
+                       (eq process 'fake-process)))
+                    ((symbol-function 'codex-ide--set-thread-name)
+                     (lambda (request-session thread-id name)
+                       (setq captured
+                             (list request-session thread-id name)))))
+            (should (equal (codex-ide-rename-session-buffer
+                            "Persistent buffer")
+                           "Persistent buffer"))
+            (should (equal captured
+                           (list session
+                                 "thread-1"
+                                 "Persistent buffer")))))
+      (kill-buffer buffer))))
+
+(ert-deftest codex-ide-restore-session-buffer-name-uses-thread-metadata ()
+  (let* ((buffer (generate-new-buffer "codex-default"))
+         (session (make-codex-ide-session :buffer buffer)))
+    (unwind-protect
+        (progn
+          (codex-ide--restore-session-buffer-name
+           session
+           '((thread . ((id . "thread-1")
+                        (name . "Persistent buffer")))))
+          (should (equal (buffer-name buffer) "Persistent buffer"))
+          (should
+           (equal (codex-ide--session-metadata-get session :thread-name)
+                  "Persistent buffer")))
+      (kill-buffer buffer))))
 
 (ert-deftest codex-ide-show-or-resume-thread-rejects-missing-directory ()
   (let ((created nil)

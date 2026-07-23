@@ -188,10 +188,79 @@
       (remhash directory codex-ide--active-buffer-objects))
     (codex-ide--maybe-disable-active-buffer-tracking)))
 
+(defun codex-ide--session-default-buffer-name (session)
+  "Return SESSION's generated default buffer name."
+  (codex-ide--session-buffer-name
+   (codex-ide-session-directory session)
+   (codex-ide-session-name-suffix session)))
+
+(defun codex-ide--session-custom-buffer-name (session)
+  "Return SESSION's custom buffer name, or nil when it uses its default."
+  (when-let* ((buffer (codex-ide-session-buffer session))
+              ((buffer-live-p buffer))
+              (name (buffer-name buffer)))
+    (unless (equal name (codex-ide--session-default-buffer-name session))
+      name)))
+
+(defun codex-ide--sync-session-buffer-name (session)
+  "Persist SESSION's custom buffer name as its Codex thread name."
+  (when-let* (((process-live-p (codex-ide-session-process session)))
+              (thread-id (codex-ide-session-thread-id session))
+              (name (codex-ide--session-custom-buffer-name session))
+              ((not (equal name
+                           (codex-ide--session-metadata-get
+                            session
+                            :thread-name)))))
+    (condition-case err
+        (progn
+          (codex-ide--set-thread-name session thread-id name)
+          (codex-ide--session-metadata-put session :thread-name name)
+          name)
+      (error
+       (codex-ide-log-message
+        session
+        "Unable to persist thread name %S: %s"
+        name
+        (error-message-string err))
+       nil))))
+
+(defun codex-ide--restore-session-buffer-name (session thread-read)
+  "Restore SESSION's buffer name from THREAD-READ metadata."
+  (when-let* ((thread (alist-get 'thread thread-read))
+              (name (alist-get 'name thread))
+              ((stringp name))
+              ((not (string-empty-p name)))
+              (buffer (codex-ide-session-buffer session))
+              ((buffer-live-p buffer)))
+    (with-current-buffer buffer
+      (rename-buffer name t))
+    (codex-ide--session-metadata-put
+     session
+     :thread-name
+     (buffer-name buffer))))
+
+(defun codex-ide-rename-session-buffer (newname &optional unique)
+  "Rename the current session buffer to NEWNAME and persist it.
+With UNIQUE non-nil, generate a unique name when NEWNAME is already in use."
+  (interactive
+   (list
+    (read-string "Rename buffer (to new name): "
+                 nil
+                 'buffer-name-history
+                 (buffer-name))
+    current-prefix-arg))
+  (let ((session (codex-ide--session-for-current-buffer)))
+    (unless (and session
+                 (eq (current-buffer) (codex-ide-session-buffer session)))
+      (user-error "This command must be run from a Codex session buffer"))
+    (prog1 (rename-buffer newname unique)
+      (codex-ide--sync-session-buffer-name session))))
+
 (defun codex-ide--teardown-session (session &optional kill-log-buffer)
   "Stop SESSION and clear its internal state.
 When KILL-LOG-BUFFER is non-nil, also kill SESSION's log buffer."
   (when session
+    (codex-ide--sync-session-buffer-name session)
     (let ((process (codex-ide-session-process session))
           (stderr-process (codex-ide-session-stderr-process session))
           (directory (codex-ide-session-directory session))
@@ -500,7 +569,8 @@ use it directly instead of inferring a project root."
               (downcase action)
               (codex-ide--elapsed-ms read-start)
               (error-message-string err))
-             nil))))
+             nil)))
+         (thread-resume-result nil))
     (codex-ide-log-message
      session
      "Resume thread/read completed in %.0fms"
@@ -509,11 +579,12 @@ use it directly instead of inferring a project root."
     (codex-ide--remember-model-name session thread-read)
     (let* ((thread-resume-start (float-time))
            (result
-            (codex-ide--request-sync
-             session
-             "thread/resume"
-             (with-current-buffer (codex-ide-session-buffer session)
-               (codex-ide--thread-resume-params thread-id session)))))
+            (setq thread-resume-result
+                  (codex-ide--request-sync
+                   session
+                   "thread/resume"
+                   (with-current-buffer (codex-ide-session-buffer session)
+                     (codex-ide--thread-resume-params thread-id session))))))
       (codex-ide-log-message
        session
        "Resume thread/resume completed in %.0fms"
@@ -521,6 +592,9 @@ use it directly instead of inferring a project root."
       (codex-ide--remember-reasoning-effort session result)
       (codex-ide--remember-model-name session result))
     (setf (codex-ide-session-thread-id session) thread-id)
+    (codex-ide--restore-session-buffer-name
+     session
+     (or thread-read thread-resume-result))
     (codex-ide--mark-session-thread-attached session)
     (codex-ide--run-session-event
      'thread-attached
@@ -793,6 +867,7 @@ use it directly instead of inferring a project root."
       (user-error "Codex stop is only available in a Codex session buffer"))
     (cond
      ((and session (process-live-p (codex-ide-session-process session)))
+      (codex-ide--sync-session-buffer-name session)
       (when (codex-ide-session-thread-id session)
         (codex-ide-log-message
          session

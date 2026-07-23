@@ -102,6 +102,23 @@
     (setq preview (replace-regexp-in-string "[\n\r]+" "↵" preview))
     preview))
 
+(defun codex-ide-resume-list--thread-name (thread)
+  "Return THREAD's non-empty user-facing name, or nil."
+  (when-let* ((name (alist-get 'name thread))
+              ((stringp name))
+              (name (string-trim name))
+              ((not (string-empty-p name))))
+    name))
+
+(defun codex-ide-resume-list--styled-preview (thread preview)
+  "Prefix PREVIEW with THREAD's styled name when present."
+  (concat
+   (when-let* ((name (codex-ide-resume-list--thread-name thread)))
+     (concat
+      (propertize name 'face 'codex-ide-session-list-id-face)
+      (propertize " — " 'face 'codex-ide-session-list-id-face)))
+   (propertize preview 'face 'default)))
+
 (defun codex-ide-resume-list--format-created-at (created-at)
   "Format CREATED-AT as a local date and time."
   (condition-case nil
@@ -119,6 +136,7 @@
              (downcase
               (string-join
                (list (codex-ide-resume-list--preview thread)
+                     (or (codex-ide-resume-list--thread-name thread) "")
                      (or (alist-get 'cwd thread) "")
                      (or (alist-get 'id thread) ""))
                "\n"))))
@@ -138,9 +156,9 @@
                (codex-ide--format-thread-updated-at
                 (alist-get 'updatedAt thread))
                'codex-ide-session-list-time-face)
-              (codex-ide-session-list-cell
-               (codex-ide-resume-list--preview thread)
-               'default)
+              (codex-ide-resume-list--styled-preview
+               thread
+               (codex-ide-resume-list--preview thread))
               (codex-ide-session-list-cell
                (if (string-empty-p directory)
                    "Unknown"
@@ -266,14 +284,14 @@ Keep the preview at least MINIMUM-PREVIEW-WIDTH columns wide when provided."
      'after-string
      (concat
       "\n"
-      (propertize
-       (concat
-        (replace-regexp-in-string
-         "^" "    "
-         (codex-ide-resume-list--wrap-preview
-          (codex-ide-resume-list--full-preview thread)))
-        "\n")
-       'face 'default)
+      (concat
+       (replace-regexp-in-string
+        "^" "    "
+        (codex-ide-resume-list--wrap-preview
+         (codex-ide-resume-list--styled-preview
+          thread
+          (codex-ide-resume-list--full-preview thread))))
+       "\n")
       (propertize
        (replace-regexp-in-string
         "^" "    "
