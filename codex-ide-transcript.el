@@ -7289,43 +7289,69 @@ LOCAL-IMAGES and IMAGE-DETAIL are forwarded to the queued turn payload."
           (codex-ide--insert-input-prompt session nil))
         (codex-ide-session-mode-sync-slash-command-minor-mode session)))))
 
+(defun codex-ide--submit-unrecorded-slash-command (session prompt entry)
+  "Execute slash command ENTRY without adding PROMPT to SESSION's transcript."
+  (let ((buffer (codex-ide-session-buffer session)))
+    (condition-case err
+        (progn
+          (with-current-buffer buffer
+            (unless (codex-ide--input-prompt-active-p session)
+              (codex-ide--insert-input-prompt session prompt))
+            (codex-ide--replace-current-input session ""))
+          (with-current-buffer buffer
+            (codex-ide-slash-command-execute-entry
+             entry
+             (codex-ide-slash-command-prompt-argument prompt)))
+          t)
+      (error
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (if (codex-ide--input-prompt-active-p session)
+               (codex-ide--replace-current-input session prompt)
+             (codex-ide--insert-input-prompt session prompt))))
+       (signal (car err) (cdr err))))))
+
 (defun codex-ide--submit-slash-command (session prompt)
   "Submit PROMPT as a slash command for SESSION when applicable.
 Return non-nil when PROMPT was a slash command."
   (when-let* ((entry (codex-ide-slash-command-resolve-prompt prompt)))
-    (let ((buffer (codex-ide-session-buffer session)))
-      (unless (buffer-live-p buffer)
-        (user-error "Current Codex session buffer is no longer live"))
-      (condition-case err
-          (progn
-            (with-current-buffer buffer
-              (unless (codex-ide--input-prompt-active-p session)
-                (codex-ide--insert-input-prompt session prompt))
-              (codex-ide--freeze-active-input-prompt session)
-              (codex-ide--append-slash-command-start session entry))
-            (with-current-buffer buffer
-              (codex-ide--with-slash-command-message-capture session
-							     (codex-ide-slash-command-execute-entry entry)))
-            (codex-ide--slash-command-detail-line session "Success")
-            (codex-ide--slash-command-block-trailing-spacing session)
-            (codex-ide--restore-input-prompt-after-slash-command session)
-            t)
-        (quit
-         (codex-ide--slash-command-detail-line session "Interrupted")
-         (codex-ide--slash-command-block-trailing-spacing session)
-         (codex-ide--restore-input-prompt-after-slash-command session)
-         (signal (car err) (cdr err)))
-        (error
-         (codex-ide--slash-command-detail-line
-          session
-          (format "Failed: %s" (error-message-string err)))
-         (codex-ide--slash-command-block-trailing-spacing session)
-         (codex-ide-log-message
-          session
-          "Slash command submission failed: %s"
-          (error-message-string err))
-         (codex-ide--reopen-input-after-submit-error session prompt err)
-         (signal (car err) (cdr err)))))))
+    (if (not (codex-ide-slash-command-entry-record-transcript-p entry))
+        (codex-ide--submit-unrecorded-slash-command session prompt entry)
+      (let ((buffer (codex-ide-session-buffer session)))
+        (unless (buffer-live-p buffer)
+          (user-error "Current Codex session buffer is no longer live"))
+        (condition-case err
+            (progn
+              (with-current-buffer buffer
+                (unless (codex-ide--input-prompt-active-p session)
+                  (codex-ide--insert-input-prompt session prompt))
+                (codex-ide--freeze-active-input-prompt session)
+                (codex-ide--append-slash-command-start session entry))
+              (with-current-buffer buffer
+                (codex-ide--with-slash-command-message-capture session
+                  (codex-ide-slash-command-execute-entry
+                   entry
+                   (codex-ide-slash-command-prompt-argument prompt))))
+              (codex-ide--slash-command-detail-line session "Success")
+              (codex-ide--slash-command-block-trailing-spacing session)
+              (codex-ide--restore-input-prompt-after-slash-command session)
+              t)
+          (quit
+           (codex-ide--slash-command-detail-line session "Interrupted")
+           (codex-ide--slash-command-block-trailing-spacing session)
+           (codex-ide--restore-input-prompt-after-slash-command session)
+           (signal (car err) (cdr err)))
+          (error
+           (codex-ide--slash-command-detail-line
+            session
+            (format "Failed: %s" (error-message-string err)))
+           (codex-ide--slash-command-block-trailing-spacing session)
+           (codex-ide-log-message
+            session
+           "Slash command submission failed: %s"
+            (error-message-string err))
+           (codex-ide--reopen-input-after-submit-error session prompt err)
+           (signal (car err) (cdr err))))))))
 
 (defun codex-ide--submit-prompt-to-session
     (session &optional prompt local-images image-detail metadata-line suppress-context)
@@ -7429,12 +7455,15 @@ IMAGE-DETAIL, when non-nil, is forwarded to each image input item."
   (codex-ide--queue-prompt))
 
 (cl-defun codex-ide-transcript-submit-prompt-to-session
-    (session prompt &key local-images image-detail metadata-line suppress-context)
+    (session prompt
+             &key local-images image-detail metadata-line suppress-context
+             (origin-buffer nil origin-buffer-supplied-p))
   "Submit PROMPT to exactly SESSION.
 
-LOCAL-IMAGES, IMAGE-DETAIL, METADATA-LINE, and SUPPRESS-CONTEXT are forwarded
-to the normal prompt submission path.  This helper is for callers outside the
-session buffer that already hold a concrete session object."
+LOCAL-IMAGES, IMAGE-DETAIL, METADATA-LINE, SUPPRESS-CONTEXT, and ORIGIN-BUFFER
+are forwarded to the normal prompt submission path.  When ORIGIN-BUFFER is
+omitted, use SESSION's buffer as before.  This helper is for callers outside
+the session buffer that already hold a concrete session object."
   (unless (codex-ide-session-p session)
     (user-error "No Codex session provided"))
   (unless (process-live-p (codex-ide-session-process session))
@@ -7447,7 +7476,8 @@ session buffer that already hold a concrete session object."
         (if (codex-ide--input-prompt-active-p session)
             (codex-ide--replace-current-input session prompt)
           (codex-ide--insert-input-prompt session prompt)))
-      (let ((codex-ide--prompt-origin-buffer buffer))
+      (let ((codex-ide--prompt-origin-buffer
+             (if origin-buffer-supplied-p origin-buffer buffer)))
         (codex-ide--submit-prompt-to-session
          session
          prompt

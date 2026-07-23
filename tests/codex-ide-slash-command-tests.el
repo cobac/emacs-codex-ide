@@ -12,11 +12,17 @@
 (require 'codex-ide-test-fixtures)
 
 (defvar codex-ide-slash-command-test--called nil)
+(defvar codex-ide-slash-command-test--argument nil)
 
 (defun codex-ide-slash-command-test--command ()
   "Record that a test slash command was invoked."
   (interactive)
   (setq codex-ide-slash-command-test--called t))
+
+(defun codex-ide-slash-command-test--argument-command (&optional argument)
+  "Record ARGUMENT passed to an inline-argument slash command."
+  (interactive)
+  (setq codex-ide-slash-command-test--argument argument))
 
 (defun codex-ide-slash-command-test--capf-candidates (capf)
   "Return all completion candidates exposed by CAPF."
@@ -34,7 +40,8 @@
 
 (ert-deftest codex-ide-slash-command-default-registry-contains-session-commands ()
   (should (equal (codex-ide-slash-command-names)
-                 '("buffers" "diff" "fast" "loop" "model" "reasoning" "sessions")))
+                 '("buffers" "diff" "fast" "loop" "model" "reasoning"
+                   "side" "btw" "sessions")))
   (should (eq (codex-ide-slash-command-entry-command
                (codex-ide-slash-command-lookup "loop"))
               'codex-ide-loop-jump-or-create))
@@ -50,6 +57,12 @@
   (should (eq (codex-ide-slash-command-entry-command
                (codex-ide-slash-command-lookup "sessions"))
               'codex-ide-status))
+  (should (eq (codex-ide-slash-command-entry-command
+               (codex-ide-slash-command-lookup "side"))
+              'codex-ide-side))
+  (should (eq (codex-ide-slash-command-entry-command
+               (codex-ide-slash-command-lookup "btw"))
+              'codex-ide-side))
   (should-not (codex-ide-slash-command-lookup "menu"))
   (should-not (codex-ide-slash-command-lookup "config"))
   (should-not (codex-ide-slash-command-lookup "status"))
@@ -83,6 +96,17 @@
          '(("test" codex-ide-slash-command-test--command "Test command."))))
     (should-error (codex-ide-slash-command-dispatch-prompt "/test later")
                   :type 'user-error)))
+
+(ert-deftest codex-ide-slash-command-passes-supported-inline-arguments ()
+  (let ((codex-ide-slash-commands
+         '(("test" codex-ide-slash-command-test--argument-command
+            "Test command."
+            (:accepts-arguments t))))
+        (codex-ide-slash-command-test--argument nil))
+    (should (codex-ide-slash-command-dispatch-prompt
+             "/test explain this failure"))
+    (should (equal codex-ide-slash-command-test--argument
+                   "explain this failure"))))
 
 (ert-deftest codex-ide-slash-command-ignores-normal-prompt-text ()
   (let ((codex-ide-slash-command-test--called nil))
@@ -409,6 +433,41 @@
                  (buffer-string)))
         (should-not (string-match-p
                      (regexp-quote "Submitted command:")
+                     (buffer-string)))
+        (should (codex-ide--input-prompt-active-p session))
+        (should (string-empty-p (codex-ide--current-input session)))))))
+
+(ert-deftest codex-ide-submit-unrecorded-slash-command-keeps-parent-clean ()
+  (codex-ide-test-with-fixture temporary-file-directory
+    (with-temp-buffer
+      (let ((codex-ide-slash-commands
+             '(("test" codex-ide-slash-command-test--argument-command
+                "Test command."
+                (:accepts-arguments t :record-transcript nil))))
+            (session (make-codex-ide-session
+                      :buffer (current-buffer)
+                      :directory default-directory
+                      :thread-id "thread-1"
+                      :status "idle"))
+            (codex-ide-slash-command-test--argument nil)
+            sent)
+        (codex-ide-session-mode)
+        (setq-local codex-ide--session session)
+        (codex-ide--insert-input-prompt session "/test side question")
+        (cl-letf (((symbol-function 'codex-ide--session-for-current-project)
+                   (lambda () session))
+                  ((symbol-function 'codex-ide--send-turn-start)
+                   (lambda (&rest _)
+                     (setq sent t))))
+          (codex-ide--submit-prompt))
+        (should (equal codex-ide-slash-command-test--argument
+                       "side question"))
+        (should-not sent)
+        (should-not (string-match-p
+                     (regexp-quote "/test side question")
+                     (buffer-string)))
+        (should-not (string-match-p
+                     (regexp-quote "* Running slash-command")
                      (buffer-string)))
         (should (codex-ide--input-prompt-active-p session))
         (should (string-empty-p (codex-ide--current-input session)))))))

@@ -207,6 +207,54 @@
                            (codex-ide--fast-service-tier session)))
                 `((serviceTier . ,service-tier)))))))
 
+(cl-defun codex-ide--thread-fork-params
+    (thread-id &key session ephemeral exclude-turns developer-instructions)
+  "Build `thread/fork' params for THREAD-ID.
+SESSION supplies the working directory and effective configuration.  When
+EPHEMERAL is non-nil, request an in-memory fork.  When EXCLUDE-TURNS is
+non-nil, omit inherited turns from the response.  DEVELOPER-INSTRUCTIONS, when
+non-nil, overrides the fork's developer instructions."
+  (unless (and (stringp thread-id)
+               (not (string-empty-p thread-id)))
+    (error "Invalid thread id: %S" thread-id))
+  (let ((working-dir (or (and session (codex-ide-session-directory session))
+                         (codex-ide--get-working-directory)))
+        (config (codex-ide--thread-config session)))
+    (delq nil
+          `((threadId . ,thread-id)
+            (cwd . ,working-dir)
+            (approvalPolicy . ,(codex-ide-config-effective-value
+                                'approval-policy
+                                session))
+            (sandbox . ,(codex-ide-config-effective-value
+                         'sandbox-mode
+                         session))
+            (personality . ,(codex-ide-config-effective-value
+                             'personality
+                             session))
+            ,@(when config
+                `((config . ,config)))
+            ,@(when-let* ((model
+                           (codex-ide-config-effective-value 'model session)))
+                `((model . ,model)))
+            ,@(when-let* ((service-tier
+                           (codex-ide--fast-service-tier session)))
+                `((serviceTier . ,service-tier)))
+            ,@(when developer-instructions
+                `((developerInstructions . ,developer-instructions)))
+            ,@(when ephemeral
+                '((ephemeral . t)))
+            ,@(when exclude-turns
+                '((excludeTurns . t)))))))
+
+(defun codex-ide--thread-inject-items (session thread-id items)
+  "Append raw response ITEMS to THREAD-ID through SESSION."
+  (codex-ide--request-sync
+   session
+   "thread/inject_items"
+   `((threadId . ,thread-id)
+     (items . ,(vconcat items)))))
+
 (defun codex-ide--thread-read-params (thread-id &optional include-turns)
   "Build `thread/read` params for THREAD-ID."
   (delq nil

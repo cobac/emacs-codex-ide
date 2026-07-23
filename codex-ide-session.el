@@ -178,8 +178,14 @@
     (when session
       (remhash session codex-ide--session-metadata))
     (setq codex-ide--sessions (delq session codex-ide--sessions))
-    (remhash directory codex-ide--active-buffer-contexts)
-    (remhash directory codex-ide--active-buffer-objects)
+    (unless (seq-some
+             (lambda (candidate)
+               (and (codex-ide--live-session-p candidate)
+                    (equal (codex-ide-session-directory candidate)
+                           directory)))
+             codex-ide--sessions)
+      (remhash directory codex-ide--active-buffer-contexts)
+      (remhash directory codex-ide--active-buffer-objects))
     (codex-ide--maybe-disable-active-buffer-tracking)))
 
 (defun codex-ide--teardown-session (session &optional kill-log-buffer)
