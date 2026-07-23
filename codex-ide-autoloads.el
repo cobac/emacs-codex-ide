@@ -302,6 +302,13 @@ Decode JSON PAYLOAD, dispatch a bridge tool call, and return JSON.
 (register-definition-prefixes "codex-ide-session-buffer-list" '("codex-ide-session-buffer-list-"))
 
 
+;;; Generated autoloads from codex-ide-resume-list.el
+
+(autoload 'codex-ide-resume-list "codex-ide-resume-list"
+  "Show resumable Codex sessions from all recorded directories." t)
+(register-definition-prefixes "codex-ide-resume-list" '("codex-ide-resume-list-"))
+
+
 ;;; Generated autoloads from codex-ide-session-list.el
 
 (register-definition-prefixes "codex-ide-session-list" '("codex-ide-session-list-"))

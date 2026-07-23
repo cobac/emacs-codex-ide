@@ -145,6 +145,21 @@ BODY may refer to the lexical variable `session'."
   (should (eq (lookup-key codex-ide-renderer-link-keymap (kbd "C-M-j"))
               #'codex-ide-renderer-open-file-link-other-window)))
 
+(ert-deftest codex-ide-renderer-parse-file-link-target-rejects-non-string-target ()
+  (should-not (codex-ide-renderer-parse-file-link-target nil)))
+
+(ert-deftest codex-ide-renderer-parse-file-link-target-decodes-before-location ()
+  (should
+   (equal
+    (codex-ide-renderer-parse-file-link-target
+     "/tmp/example%20%281%29.txt:682")
+    '("/tmp/example (1).txt" 682 nil)))
+  (should
+   (equal
+    (codex-ide-renderer-parse-file-link-target
+     "/tmp/example%20%281%29.txt#L682C4")
+    '("/tmp/example (1).txt" 682 4))))
+
 (ert-deftest codex-ide-renderer-button-keymaps-bind-codex-navigation ()
   (should (eq (lookup-key codex-ide-renderer-link-keymap (kbd "TAB"))
               #'codex-ide-renderer-button-nav-forward))
