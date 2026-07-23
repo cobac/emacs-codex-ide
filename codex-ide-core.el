@@ -248,11 +248,15 @@ When SUFFIX is nil, return BUFFER-NAME unchanged."
             (_ trimmed)))))))
 
 (defun codex-ide--session-buffer-p (buffer)
-  "Return non-nil when BUFFER looks like a Codex session buffer."
-  (when-let* ((name (cond
-                    ((stringp buffer) buffer)
-                    ((buffer-live-p buffer) (buffer-name buffer)))))
-    (string-prefix-p (format "*%s[" codex-ide-buffer-name-prefix) name)))
+  "Return non-nil when BUFFER is attached to a Codex session."
+  (when-let* ((buffer (if (stringp buffer)
+                          (get-buffer buffer)
+                        buffer))
+              ((buffer-live-p buffer)))
+    (with-current-buffer buffer
+      (and (boundp 'codex-ide--session)
+           (codex-ide-session-p codex-ide--session)
+           (eq buffer (codex-ide-session-buffer codex-ide--session))))))
 
 (defun codex-ide--normalize-directory (directory)
   "Return a canonical directory key for DIRECTORY."

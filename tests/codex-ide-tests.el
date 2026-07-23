@@ -206,6 +206,23 @@
 							     (file-name-nondirectory
 							      (directory-file-name project-dir)))))))))))
 
+(ert-deftest codex-ide-session-buffer-p-recognizes-custom-named-session ()
+  (let ((session-buffer (generate-new-buffer "custom-codex-name")))
+    (unwind-protect
+        (let ((session (make-codex-ide-session)))
+          (setf (codex-ide-session-buffer session) session-buffer)
+          (with-current-buffer session-buffer
+            (setq-local codex-ide--session session))
+          (should (codex-ide--session-buffer-p session-buffer))
+          (should (codex-ide--session-buffer-p "custom-codex-name")))
+      (kill-buffer session-buffer))))
+
+(ert-deftest codex-ide-session-buffer-p-rejects-prefix-only-buffer ()
+  (let ((prefix-buffer (generate-new-buffer "*codex[not-a-session]*")))
+    (unwind-protect
+        (should-not (codex-ide--session-buffer-p prefix-buffer))
+      (kill-buffer prefix-buffer))))
+
 (ert-deftest codex-ide-create-process-session-skips-log-buffer-when-logging-disabled ()
   (let ((project-dir (codex-ide-test--make-temp-project)))
     (codex-ide-test-with-fixture project-dir
