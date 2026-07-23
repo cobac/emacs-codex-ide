@@ -541,6 +541,11 @@
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
+(ert-deftest codex-ide-session-mode-remaps-buffer-rename ()
+  (should
+   (eq (command-remapping 'rename-buffer nil codex-ide-session-mode-map)
+       #'codex-ide-rename-session-buffer)))
+
 (provide 'codex-ide-session-mode-tests)
 
 ;;; codex-ide-session-mode-tests.el ends here
