@@ -285,6 +285,20 @@ When FORCE-RELOAD is non-nil, ask app-server to bypass its skills cache."
    "thread/read"
    (codex-ide--thread-read-params thread-id include-turns)))
 
+(defun codex-ide--set-thread-name (session thread-id name)
+  "Set THREAD-ID's user-facing NAME through SESSION."
+  (unless (and (stringp thread-id)
+               (not (string-empty-p thread-id)))
+    (error "Invalid thread id: %S" thread-id))
+  (unless (and (stringp name)
+               (not (string-empty-p name)))
+    (error "Invalid thread name: %S" name))
+  (codex-ide--request-sync
+   session
+   "thread/name/set"
+   `((threadId . ,thread-id)
+     (name . ,name))))
+
 (defun codex-ide--list-skills (&optional session force-reload)
   "List available skills using SESSION.
 When FORCE-RELOAD is non-nil, ask app-server to re-scan skills from disk."

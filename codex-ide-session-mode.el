@@ -89,6 +89,9 @@
 (define-key codex-ide-session-mode-map (kbd "C-M-n") #'codex-ide-next-prompt-line)
 (define-key codex-ide-session-mode-map (kbd "TAB") #'codex-ide-session-mode-nav-forward)
 (define-key codex-ide-session-mode-map (kbd "<backtab>") #'codex-ide-session-mode-nav-backward)
+(define-key codex-ide-session-mode-map
+            [remap rename-buffer]
+            #'codex-ide-rename-session-buffer)
 (define-key codex-ide-session-prompt-minor-mode-map (kbd "M-p") #'codex-ide-previous-prompt-history)
 (define-key codex-ide-session-prompt-minor-mode-map (kbd "M-n") #'codex-ide-next-prompt-history)
 (define-key codex-ide-session-slash-command-minor-mode-map
