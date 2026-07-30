@@ -166,7 +166,9 @@ while 1 would fully replace the background with the foreground color."
   (codex-ide-status-mode--teardown-auto-refresh)
   (codex-ide-status-mode--teardown-theme-refresh)
   (codex-ide-status-mode--setup-auto-refresh)
-  (codex-ide-status-mode--setup-theme-refresh))
+  (codex-ide-status-mode--setup-theme-refresh)
+  (add-hook 'window-size-change-functions
+            #'codex-ide-status-mode--handle-window-size-change nil t))
 
 (defconst codex-ide-status-mode--session-events
   '(created destroyed thread-attached status-changed turn-started
@@ -688,6 +690,33 @@ The plist contains `:text', `:start', and `:end'."
   "Return the first line of preview VALUE."
   (car (split-string (codex-ide-status-mode--preview-text value) "\n")))
 
+(defun codex-ide-status-mode--display-width ()
+  "Return the narrowest window width displaying the current buffer."
+  (let ((windows (get-buffer-window-list (current-buffer) nil t)))
+    (if windows
+        (apply #'min (mapcar #'window-body-width windows))
+      (window-body-width (selected-window)))))
+
+(defun codex-ide-status-mode--fit-heading (heading)
+  "Fit all-session HEADING onto one displayed line."
+  (if (codex-ide-status-mode--all-sessions-p)
+      (truncate-string-to-width
+       heading
+       (max 1 (1- (codex-ide-status-mode--display-width)))
+       nil nil "…")
+    heading))
+
+(defun codex-ide-status-mode--handle-window-size-change (&optional _frame)
+  "Refit all-session headings after a window size change."
+  (when (and (codex-ide-status-mode--all-sessions-p)
+             codex-ide-status-mode--directory
+             (get-buffer-window (current-buffer) t))
+    (codex-ide-section-preserve-view-state
+     #'codex-ide-status-mode--section-identity
+     (lambda ()
+       (codex-ide-status-mode--render-buffer
+        codex-ide-status-mode--directory :is-refresh t :reload nil)))))
+
 (defun codex-ide-status-mode--plain-text (value)
   "Return VALUE without text properties."
   (when value
@@ -1125,10 +1154,12 @@ Return nil when there is no agent reply."
          (last-prompt (or (codex-ide-status-mode--last-submitted-prompt-text session) ""))
          (last-response (or (codex-ide-status-mode--buffer-transcript-slice session) ""))
          (preview (codex-ide-status-mode--preview-line first-prompt))
-         (title (concat
-                 (codex-ide-status-mode--format-heading-status label status)
-                 "  "
-                 (codex-ide-status-mode--format-heading-preview preview))))
+         (title
+          (codex-ide-status-mode--fit-heading
+           (concat
+            (codex-ide-status-mode--format-heading-status label status)
+            "  "
+            (codex-ide-status-mode--format-heading-preview preview)))))
     (codex-ide-section-insert
      'buffer session title
      (lambda (_section)
@@ -1175,15 +1206,17 @@ Return nil when there is no agent reply."
                          (alist-get 'name thread)
                          (alist-get 'preview thread)
                          "Untitled"))))
-         (title (concat
-                 (codex-ide-status-mode--format-heading-status
-                  (codex-ide-status-mode--pad-heading-part label status-width)
-                  status)
-                 "  "
-                 (codex-ide-status-mode--format-heading-updated
-                  (codex-ide-status-mode--pad-heading-part updated-text updated-width))
-                 "  "
-                 (codex-ide-status-mode--format-heading-preview preview))))
+         (title
+          (codex-ide-status-mode--fit-heading
+           (concat
+            (codex-ide-status-mode--format-heading-status
+             (codex-ide-status-mode--pad-heading-part label status-width)
+             status)
+            "  "
+            (codex-ide-status-mode--format-heading-updated
+             (codex-ide-status-mode--pad-heading-part updated-text updated-width))
+            "  "
+            (codex-ide-status-mode--format-heading-preview preview)))))
     (codex-ide-section-insert
      'thread thread title
      (lambda (_section)
@@ -1276,7 +1309,7 @@ Return nil when there is no agent reply."
 
 (cl-defun codex-ide-status-mode--render-sections
     (directory &key (is-refresh nil) (reload t))
-  "Render status sections for DIRECTORY and return the session count.
+  "Render status sections for DIRECTORY and return the visible session count.
 
 When IS-REFRESH is non-nil, existing buffer content will be erased/reset.
 When RELOAD is non-nil, reload thread metadata before rendering."
@@ -1401,7 +1434,8 @@ An empty FILTER clears the current filter."
   (let* ((directory
           (codex-ide--normalize-directory
            (codex-ide--get-working-directory)))
-         (buffer (get-buffer-create "*Codex Sessions*")))
+         (buffer (get-buffer-create "*Codex Sessions*"))
+         (count 0))
     (with-current-buffer buffer
       (codex-ide-status-mode)
       (setq-local default-directory directory
@@ -1409,8 +1443,14 @@ An empty FILTER clears the current filter."
                   codex-ide-status-mode--scope 'all
                   codex-ide-status-mode--filter ""
                   codex-ide-status-mode--query-session nil)
-      (codex-ide-status-mode--render-buffer directory :is-refresh t))
-    (pop-to-buffer buffer)))
+      (setq-local truncate-lines nil
+                  word-wrap t)
+      (codex-ide-status-mode--render-buffer directory :is-refresh t)
+      (setq count (length codex-ide-status-mode--threads)))
+    (pop-to-buffer buffer)
+    (message "Loaded %d Codex session%s"
+             count
+             (if (= count 1) "" "s"))))
 
 (provide 'codex-ide-status-mode)
 

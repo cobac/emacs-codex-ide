@@ -428,6 +428,19 @@
                   "First preview line\nSecond preview line")
                  "First preview line")))
 
+(ert-deftest codex-ide-status-all-heading-fits-visible-width ()
+  (with-temp-buffer
+    (codex-ide-status-mode)
+    (setq-local codex-ide-status-mode--scope 'all)
+    (cl-letf (((symbol-function 'codex-ide-status-mode--display-width)
+               (lambda () 24)))
+      (let ((heading
+             (codex-ide-status-mode--fit-heading
+              "Stored  just now  A deliberately long preview")))
+        (should (<= (string-width heading) 23))
+        (should-not (string-match-p "\n" heading))
+        (should (string-suffix-p "…" heading))))))
+
 (ert-deftest codex-ide-status-buffer-heading-uses-first-submitted-prompt-text ()
   (let* ((root-dir (codex-ide-test--make-temp-project))
          (project-dir (expand-file-name "alpha" root-dir))
@@ -681,7 +694,7 @@
 					(forward-line 1)
 					(should (invisible-p (point))))))))))
 
-(ert-deftest codex-ide-status-plus-is-bound-to-start-a-new-session ()
+(ert-deftest codex-ide-status-plus-starts-a-new-session ()
   (should (eq (lookup-key codex-ide-status-mode-map (kbd "+"))
               #'codex-ide)))
 
@@ -1626,8 +1639,8 @@
                                :sort-key "updated_at")))
           (with-current-buffer buffer-name
             (should (eq codex-ide-status-mode--scope 'all))
-            (should truncate-lines)
-            (should-not word-wrap)
+            (should-not truncate-lines)
+            (should word-wrap)
             (should (equal (codex-ide-status-mode-test--header-line-string)
                            "All sessions | 0 sessions"))
             (goto-char (point-min))
