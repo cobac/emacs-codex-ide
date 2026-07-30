@@ -71,6 +71,15 @@ while 1 would fully replace the background with the foreground color."
 (defvar-local codex-ide-status-mode--directory nil
   "Project directory displayed by the current status buffer.")
 
+(defvar-local codex-ide-status-mode--scope 'project
+  "Session scope displayed by the current status buffer.")
+
+(defvar-local codex-ide-status-mode--threads nil
+  "Stored thread metadata loaded into the current status buffer.")
+
+(defvar-local codex-ide-status-mode--query-session nil
+  "App-server session used to query stored thread metadata.")
+
 (defvar-local codex-ide-status-mode--refresh-timer nil
   "Idle timer used to coalesce automatic status buffer refreshes.")
 
@@ -180,8 +189,9 @@ while 1 would fully replace the background with the foreground color."
   "Schedule a refresh when EVENT for SESSION affects this status buffer."
   (when (and codex-ide-status-mode--directory
              (memq event codex-ide-status-mode--session-events)
-             (equal (codex-ide-session-directory session)
-                    codex-ide-status-mode--directory))
+             (or (eq codex-ide-status-mode--scope 'all)
+                 (equal (codex-ide-session-directory session)
+                        codex-ide-status-mode--directory)))
     (codex-ide-status-mode--schedule-refresh)))
 
 (defun codex-ide-status-mode--setup-auto-refresh ()
@@ -255,6 +265,16 @@ while 1 would fully replace the background with the foreground color."
            (alist-get 'preview thread))))
     (_ (codex-ide-section-type section))))
 
+(defun codex-ide-status-mode--all-sessions-p ()
+  "Return non-nil when the current status buffer shows all sessions."
+  (eq codex-ide-status-mode--scope 'all))
+
+(defun codex-ide-status-mode--thread-directory (thread)
+  "Return the working directory associated with THREAD."
+  (if (codex-ide-status-mode--all-sessions-p)
+      (alist-get 'cwd thread)
+    codex-ide-status-mode--directory))
+
 (defun codex-ide-status-mode--actionable-section-at-point ()
   "Return the actionable status section at point.
 Only child `buffer' and `thread' sections support visit and delete actions."
@@ -293,9 +313,12 @@ Only child `buffer' and `thread' sections support visit and delete actions."
          (user-error "Session buffer is no longer live"))
        (codex-ide--show-session-buffer session)))
     ('thread
-     (codex-ide--prepare-session-operations)
-     (codex-ide--show-or-resume-thread (alist-get 'id (codex-ide-section-value section))
-                                       codex-ide-status-mode--directory))))
+     (let* ((thread (codex-ide-section-value section))
+            (directory (codex-ide-status-mode--thread-directory thread)))
+       (unless (and (stringp directory) (not (string-empty-p directory)))
+         (user-error "Stored Codex session has no working directory"))
+       (codex-ide--prepare-session-operations)
+       (codex-ide--show-or-resume-thread (alist-get 'id thread) directory)))))
 
 (defun codex-ide-status-mode--delete-buffer-session (session)
   "Delete SESSION's live buffer with list-mode-consistent confirmation."
@@ -446,8 +469,10 @@ Only child `buffer' and `thread' sections support visit and delete actions."
 
 (defun codex-ide-status-mode--header-line (directory count)
   "Return header-line text for DIRECTORY with session COUNT."
-  (format "Project: %s | %d %s"
-          (codex-ide--project-name directory)
+  (format "%s | %d %s"
+          (if (codex-ide-status-mode--all-sessions-p)
+              "All sessions"
+            (format "Project: %s" (codex-ide--project-name directory)))
           count
           (if (= count 1) "session" "sessions")))
 
@@ -670,11 +695,16 @@ The plist contains `:text', `:start', and `:end'."
   (concat text (make-string (max 0 (- width (string-width text))) ?\s)))
 
 (defun codex-ide-status-mode--heading-layout (threads directory)
-  "Return heading layout widths for THREADS in DIRECTORY."
+  "Return heading layout widths for THREADS using fallback DIRECTORY."
   (let ((status-width 0)
         (updated-width 0))
     (dolist (thread threads)
-      (let* ((session (codex-ide-status-mode--thread-session thread directory))
+      (let* ((thread-directory
+              (if (codex-ide-status-mode--all-sessions-p)
+                  (codex-ide-status-mode--thread-directory thread)
+                directory))
+             (session (codex-ide-status-mode--thread-session
+                       thread thread-directory))
              (status (if session
                          (codex-ide-session-status session)
                        "stored"))
@@ -951,7 +981,8 @@ Return nil when there is no agent reply."
 
 (defun codex-ide-status-mode--thread-session (thread directory)
   "Return the live session linked to THREAD in DIRECTORY, if any."
-  (codex-ide--session-for-thread-id (alist-get 'id thread) directory))
+  (when directory
+    (codex-ide--session-for-thread-id (alist-get 'id thread) directory)))
 
 (defun codex-ide-status-mode--insert-thread-metadata-line (label value)
   "Insert a thread metadata line with LABEL and VALUE."
@@ -1096,12 +1127,27 @@ Return nil when there is no agent reply."
          (codex-ide-status-mode--apply-expanded-content-face start (point))))
      t)))
 
+(defun codex-ide-status-mode--load-threads (directory)
+  "Load stored threads for the current scope using DIRECTORY."
+  (setq codex-ide-status-mode--query-session
+        (codex-ide--ensure-query-session-for-thread-selection directory))
+  (setq codex-ide-status-mode--threads
+        (if (codex-ide-status-mode--all-sessions-p)
+            (append
+             (alist-get
+              'data
+              (codex-ide--list-threads-page
+               codex-ide-status-mode--query-session
+               :all-directories t))
+             nil)
+          (codex-ide--thread-list-data
+           codex-ide-status-mode--query-session))))
+
 (cl-defun codex-ide-status-mode--render-sections (directory &key (is-refresh nil))
   "Render status sections for DIRECTORY and return the session count.
 
 When IS-REFRESH is non-nil, existing buffer content will be erased/reset."
-  (let* ((query-session nil)
-         (threads nil)
+  (let* ((threads nil)
          (layout nil)
          (index 0))
     (codex-ide--prepare-session-operations)
@@ -1109,14 +1155,20 @@ When IS-REFRESH is non-nil, existing buffer content will be erased/reset."
       (erase-buffer)
       (codex-ide-section-reset))
     (codex-ide-status-mode--refresh-striped-heading-face)
-    (setq query-session (codex-ide--ensure-query-session-for-thread-selection directory))
+    (codex-ide-status-mode--load-threads directory)
     (setq threads
           (codex-ide-status-mode--sort-threads-by-updated
-           (codex-ide--thread-list-data query-session)))
+           codex-ide-status-mode--threads))
     (setq layout (codex-ide-status-mode--heading-layout threads directory))
     (dolist (thread threads)
       (setq index (1+ index))
-      (let ((section (codex-ide-status-mode--insert-thread-section thread directory layout)))
+      (let* ((thread-directory
+              (if (codex-ide-status-mode--all-sessions-p)
+                  (codex-ide-status-mode--thread-directory thread)
+                directory))
+             (section
+              (codex-ide-status-mode--insert-thread-section
+               thread thread-directory layout)))
         (when (zerop (% index 2))
           (codex-ide-status-mode--apply-heading-stripe section))))
     (length threads)))
@@ -1155,7 +1207,26 @@ When IS-REFRESH is non-nil, existing buffer content will be erased/reset."
     (with-current-buffer buffer
       (codex-ide-status-mode)
       (setq-local default-directory directory)
-      (setq-local codex-ide-status-mode--directory directory)
+      (setq-local codex-ide-status-mode--directory directory
+                  codex-ide-status-mode--scope 'project
+                  codex-ide-status-mode--query-session nil)
+      (codex-ide-status-mode--render-buffer directory :is-refresh t))
+    (pop-to-buffer buffer)))
+
+;;;###autoload
+(defun codex-ide-status-all ()
+  "Show the Codex status buffer for sessions from all recorded directories."
+  (interactive)
+  (let* ((directory
+          (codex-ide--normalize-directory
+           (codex-ide--get-working-directory)))
+         (buffer (get-buffer-create "*Codex Sessions*")))
+    (with-current-buffer buffer
+      (codex-ide-status-mode)
+      (setq-local default-directory directory
+                  codex-ide-status-mode--directory directory
+                  codex-ide-status-mode--scope 'all
+                  codex-ide-status-mode--query-session nil)
       (codex-ide-status-mode--render-buffer directory :is-refresh t))
     (pop-to-buffer buffer)))
 

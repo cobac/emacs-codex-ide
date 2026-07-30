@@ -189,7 +189,8 @@
 
 (defun codex-ide--thread-resume-params (thread-id &optional session)
   "Build `thread/resume` params for THREAD-ID in SESSION's current working directory."
-  (let ((working-dir (codex-ide--get-working-directory))
+  (let ((working-dir (or (and session (codex-ide-session-directory session))
+                         (codex-ide--get-working-directory)))
         (config (codex-ide--thread-config session)))
     (delq nil
           `((threadId . ,thread-id)
@@ -452,23 +453,40 @@ CALLBACK is called with RESULT and ERROR."
      ((member (alist-get 'author item) '("assistant" assistant)) 'assistant)
      (t nil))))
 
-(cl-defun codex-ide--list-threads (&optional session &key limit sort-key)
-  "List threads for the current working directory using SESSION.
+(cl-defun codex-ide--list-threads-page
+    (&optional session &key all-directories cursor limit sort-key)
+  "Return one page of stored threads using SESSION.
 
-When LIMIT is nil, use `codex-ide-thread-list-default-limit'.  When
-SORT-KEY is nil, sort by `updated_at'."
+Unless ALL-DIRECTORIES is non-nil, restrict results to SESSION's working
+directory.  CURSOR continues a previous request.  When LIMIT is nil, use
+`codex-ide-thread-list-default-limit'.  When SORT-KEY is nil, sort by
+`updated_at'."
   (setq session (or session (codex-ide--get-default-session-for-current-buffer)))
   (unless session
     (error "No Codex session available"))
   (let* ((working-dir (codex-ide-session-directory session))
          (limit (or limit codex-ide-thread-list-default-limit))
-         (sort-key (or sort-key "updated_at"))
-         (result (codex-ide--request-sync
+         (sort-key (or sort-key "updated_at")))
+    (codex-ide--request-sync
+     session
+     "thread/list"
+     (delq nil
+           `(,@(unless all-directories
+                 `((cwd . ,working-dir)))
+             ,@(when cursor
+                 `((cursor . ,cursor)))
+             (limit . ,limit)
+             (sortKey . ,sort-key))))))
+
+(cl-defun codex-ide--list-threads (&optional session &key limit sort-key)
+  "List threads for the current working directory using SESSION.
+
+When LIMIT is nil, use `codex-ide-thread-list-default-limit'.  When
+SORT-KEY is nil, sort by `updated_at'."
+  (let* ((result (codex-ide--list-threads-page
                   session
-                  "thread/list"
-                  `((cwd . ,working-dir)
-                    (limit . ,limit)
-                    (sortKey . ,sort-key))))
+                  :limit limit
+                  :sort-key sort-key))
          (data (alist-get 'data result)))
     (append data nil)))
 

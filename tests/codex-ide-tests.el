@@ -8767,6 +8767,7 @@
 								   (mapcar #'car (nreverse requests)))
 						       '("initialize" "thread/read" "thread/resume")))
 					(with-current-buffer (codex-ide-session-buffer session)
+					  (should (equal (buffer-name) "Resume flow"))
 					  (let ((buffer-text (buffer-string)))
 					    (should (string-match-p "^Why is resume stale\\?" buffer-text))
 					    (should (string-match-p "The prompt was restored too early\\." buffer-text))
@@ -8813,6 +8814,7 @@
 					(should (equal (mapcar #'car (nreverse requests))
 						       '("thread/read" "thread/resume")))
 					(with-current-buffer (codex-ide-session-buffer session)
+					  (should (equal (buffer-name) "Explicit flow"))
 					  (let ((buffer-text (buffer-string)))
 					    (should (string-match-p "^Resume this exact thread\\." buffer-text))
 					    (should (string-match-p "Exact thread resumed\\." buffer-text))))))))))
@@ -10054,7 +10056,78 @@
            (equal (codex-ide--session-metadata-get session :thread-name)
                   "Persistent buffer")))
       (kill-buffer buffer))))
+(ert-deftest codex-ide-list-threads-page-can-list-all-directories ()
+  (let ((captured-params nil)
+        (session (make-codex-ide-session :directory "/tmp/project")))
+    (cl-letf (((symbol-function 'codex-ide--request-sync)
+               (lambda (_session method params)
+                 (should (equal method "thread/list"))
+                 (setq captured-params params)
+                 '((data . []) (nextCursor . "next-page")))))
+      (should
+       (equal
+        (codex-ide--list-threads-page
+         session
+         :all-directories t
+         :cursor "current-page"
+         :limit 100)
+        '((data . []) (nextCursor . "next-page"))))
+      (should
+       (equal captured-params
+              '((cursor . "current-page")
+                (limit . 100)
+                (sortKey . "updated_at")))))))
 
+(ert-deftest codex-ide-create-process-session-for-directory-preserves-subdirectory ()
+  (let* ((root (codex-ide-test--make-temp-project))
+         (subdirectory (expand-file-name "nested" root))
+         (spawn-directory nil))
+    (make-directory subdirectory t)
+    (codex-ide-test-with-fixture root
+      (codex-ide-test-with-fake-processes
+        (let ((fake-make-process (symbol-function 'make-process)))
+          (cl-letf (((symbol-function 'make-process)
+                     (lambda (&rest args)
+                       (setq spawn-directory default-directory)
+                       (apply fake-make-process args))))
+            (let ((session
+                   (codex-ide--create-process-session-for-directory subdirectory)))
+              (should (equal (codex-ide-session-directory session)
+                             (codex-ide--normalize-directory subdirectory)))
+              (should (equal (directory-file-name spawn-directory)
+                             (codex-ide--normalize-directory subdirectory)))
+              (with-current-buffer (codex-ide-session-buffer session)
+                (should (equal (directory-file-name default-directory)
+                               (codex-ide--normalize-directory
+                                subdirectory)))))))))))
+
+(ert-deftest codex-ide-thread-resume-params-use-explicit-session-directory ()
+  (let* ((session-directory "/tmp/original/subdirectory")
+         (session (make-codex-ide-session :directory session-directory)))
+    (cl-letf (((symbol-function 'codex-ide--get-working-directory)
+               (lambda () "/tmp/inferred-project-root"))
+              ((symbol-function 'codex-ide-config-effective-value)
+               (lambda (&rest _args) nil))
+              ((symbol-function 'codex-ide-config-effective-reasoning-effort)
+               (lambda (&optional _session) nil))
+              ((symbol-function 'codex-ide--fast-service-tier)
+               (lambda (&optional _session) nil)))
+      (should
+       (equal (alist-get 'cwd
+                         (codex-ide--thread-resume-params "thread-1" session))
+              session-directory)))))
+
+(ert-deftest codex-ide-show-or-resume-thread-rejects-missing-directory ()
+  (let ((created nil)
+        (missing
+         (expand-file-name
+          "codex-ide-missing-directory"
+          temporary-file-directory)))
+    (cl-letf (((symbol-function 'codex-ide--create-process-session-for-directory)
+               (lambda (_directory) (setq created t))))
+      (should-error (codex-ide--show-or-resume-thread "thread-1" missing)
+                    :type 'user-error))
+    (should-not created)))
 (provide 'codex-ide-tests)
 
 ;;; codex-ide-tests.el ends here

@@ -1404,6 +1404,70 @@
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
+(ert-deftest codex-ide-status-all-renders-and-resumes-in-thread-directory ()
+  (let* ((directory "/tmp/status-query")
+         (thread-directory "/tmp/original-project")
+         (thread `((id . "thread-all")
+                   (cwd . ,thread-directory)
+                   (preview . "First human message")
+                   (createdAt . 10)
+                   (updatedAt . 20)))
+         (visited nil))
+    (with-temp-buffer
+      (codex-ide-status-mode)
+      (setq-local codex-ide-status-mode--directory directory
+                  codex-ide-status-mode--scope 'all
+                  codex-ide-status-mode--threads (list thread))
+      (cl-letf (((symbol-function 'codex-ide-status-mode--load-threads)
+                 (lambda (_directory) nil))
+                ((symbol-function 'codex-ide--prepare-session-operations)
+                 (lambda () nil))
+                ((symbol-function 'codex-ide--show-or-resume-thread)
+                 (lambda (thread-id cwd)
+                   (setq visited (list thread-id cwd)))))
+        (codex-ide-status-mode--render-buffer directory :is-refresh t)
+        (should (equal (codex-ide-status-mode-test--header-line-string)
+                       "All sessions | 1 session"))
+        (should (search-forward "First human message" nil t))
+        (beginning-of-line)
+        (codex-ide-status-mode-display-session-at-point)
+        (should (equal visited (list "thread-all" thread-directory)))))))
+
+(ert-deftest codex-ide-status-all-requests-threads-from-all-directories ()
+  (let* ((directory temporary-file-directory)
+         (session (make-codex-ide-session
+                   :directory directory
+                   :process 'query-process))
+         (captured nil)
+         (buffer-name "*Codex Sessions*"))
+    (when (get-buffer buffer-name)
+      (kill-buffer buffer-name))
+    (unwind-protect
+        (cl-letf (((symbol-function 'codex-ide--get-working-directory)
+                   (lambda () directory))
+                  ((symbol-function 'codex-ide--prepare-session-operations)
+                   (lambda () nil))
+                  ((symbol-function
+                    'codex-ide--ensure-query-session-for-thread-selection)
+                   (lambda (_directory) session))
+                  ((symbol-function 'codex-ide--list-threads-page)
+                   (lambda (request-session &rest args)
+                     (setq captured (cons request-session args))
+                     '((data . []))))
+                  ((symbol-function 'pop-to-buffer)
+                   (lambda (buffer &rest _args) buffer)))
+          (codex-ide-status-all)
+          (should (eq (car captured) session))
+          (should (equal (cdr captured) '(:all-directories t)))
+          (with-current-buffer buffer-name
+            (should (eq codex-ide-status-mode--scope 'all))
+            (should truncate-lines)
+            (should-not word-wrap)
+            (should (equal (codex-ide-status-mode-test--header-line-string)
+                           "All sessions | 0 sessions"))))
+      (when (get-buffer buffer-name)
+        (kill-buffer buffer-name)))))
+
 (provide 'codex-ide-status-mode-tests)
 
 ;;; codex-ide-status-mode-tests.el ends here
