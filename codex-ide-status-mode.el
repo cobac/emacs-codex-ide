@@ -9,6 +9,8 @@
 (require 'button)
 (require 'cl-lib)
 (require 'color)
+(require 'seq)
+(require 'subr-x)
 (require 'codex-ide)
 (require 'codex-ide-nav)
 (require 'codex-ide-renderer)
@@ -80,6 +82,9 @@ while 1 would fully replace the background with the foreground color."
 (defvar-local codex-ide-status-mode--next-cursor nil
   "Cursor for the next page of stored threads.")
 
+(defvar-local codex-ide-status-mode--filter ""
+  "Case-insensitive filter applied to loaded stored threads.")
+
 (defvar-local codex-ide-status-mode--query-session nil
   "App-server session used to query stored thread metadata.")
 
@@ -105,6 +110,12 @@ while 1 would fully replace the background with the foreground color."
 (define-key codex-ide-status-mode-map (kbd "D") #'codex-ide-status-mode-delete-thing-at-point)
 (define-key codex-ide-status-mode-map (kbd "K") #'codex-ide-status-mode-kill-buffer-at-point)
 (define-key codex-ide-status-mode-map (kbd "l") #'codex-ide-status-mode-refresh)
+(define-key codex-ide-status-mode-map (kbd "/") #'codex-ide-status-mode-filter)
+(define-key codex-ide-status-mode-map (kbd "s") #'codex-ide-status-mode-filter)
+(define-key codex-ide-status-mode-map (kbd "C-g") #'codex-ide-status-mode-quit)
+(define-key codex-ide-status-mode-map (kbd "q") #'codex-ide-status-mode-quit)
+(define-key codex-ide-status-mode-map (kbd "g") nil)
+(define-key codex-ide-status-mode-map (kbd "g r") #'codex-ide-status-mode-refresh)
 (define-key codex-ide-status-mode-map
             (kbd "RET")
             #'codex-ide-status-mode-display-session-at-point)
@@ -693,6 +704,51 @@ The plist contains `:text', `:start', and `:end'."
   "Return PREVIEW styled for section headings."
   preview)
 
+(defun codex-ide-status-mode--thread-name (thread)
+  "Return THREAD's non-empty user-facing name, or nil."
+  (when-let* ((name (alist-get 'name thread))
+              ((stringp name))
+              (name (string-trim name))
+              ((not (string-empty-p name))))
+    name))
+
+(defun codex-ide-status-mode--full-thread-preview (thread)
+  "Return THREAD's complete human-authored preview."
+  (let ((preview
+         (codex-ide--thread-choice-preview
+          (or (alist-get 'preview thread) ""))))
+    (if (string-empty-p preview) "Untitled" preview)))
+
+(defun codex-ide-status-mode--filter-match-p (thread)
+  "Return non-nil when THREAD matches the active status filter."
+  (or (string-empty-p codex-ide-status-mode--filter)
+      (let* ((directory (codex-ide-status-mode--thread-directory thread))
+             (session (codex-ide-status-mode--thread-session thread directory))
+             (search-text
+              (downcase
+               (string-join
+                (list (codex-ide-status-mode--full-thread-preview thread)
+                      (or (codex-ide-status-mode--thread-name thread) "")
+                      (or (alist-get 'cwd thread) "")
+                      (or (alist-get 'id thread) "")
+                      (or (and session
+                               (codex-ide-status-mode--last-submitted-prompt-text
+                                session))
+                          "")
+                      (or (and session
+                               (codex-ide-status-mode--buffer-transcript-slice
+                                session))
+                          ""))
+                "\n"))))
+        (string-match-p
+         (regexp-quote (downcase codex-ide-status-mode--filter))
+         search-text))))
+
+(defun codex-ide-status-mode--visible-threads ()
+  "Return loaded threads matching the current status filter."
+  (seq-filter #'codex-ide-status-mode--filter-match-p
+              codex-ide-status-mode--threads))
+
 (defun codex-ide-status-mode--pad-heading-part (text width)
   "Return TEXT padded with trailing spaces to WIDTH."
   (concat text (make-string (max 0 (- width (string-width text))) ?\s)))
@@ -1199,7 +1255,7 @@ When RELOAD is non-nil, reload thread metadata before rendering."
   (codex-ide-status-mode--refresh-striped-heading-face)
   (let* ((threads
           (codex-ide-status-mode--sort-threads-by-updated
-           codex-ide-status-mode--threads))
+           (codex-ide-status-mode--visible-threads)))
          (layout (codex-ide-status-mode--heading-layout threads directory))
          (index 0))
     (dolist (thread threads)
@@ -1241,6 +1297,32 @@ When RELOAD is non-nil, reload thread metadata before rendering."
      (codex-ide-status-mode--render-buffer codex-ide-status-mode--directory
                                            :is-refresh t))))
 
+(defun codex-ide-status-mode-filter (filter)
+  "Show only loaded sessions matching FILTER.
+An empty FILTER clears the current filter."
+  (interactive
+   (list (read-string "Filter Codex sessions (empty clears): "
+                      codex-ide-status-mode--filter)))
+  (setq codex-ide-status-mode--filter (string-trim filter))
+  (codex-ide-section-preserve-view-state
+   #'codex-ide-status-mode--section-identity
+   (lambda ()
+     (codex-ide-status-mode--render-buffer
+      codex-ide-status-mode--directory :is-refresh t :reload nil))))
+
+(defun codex-ide-status-mode-quit ()
+  "Clear the current filter, or quit the status window when unfiltered."
+  (interactive)
+  (if (string-empty-p codex-ide-status-mode--filter)
+      (quit-window)
+    (setq codex-ide-status-mode--filter "")
+    (codex-ide-section-preserve-view-state
+     #'codex-ide-status-mode--section-identity
+     (lambda ()
+       (codex-ide-status-mode--render-buffer
+        codex-ide-status-mode--directory :is-refresh t :reload nil)))
+    (message "Codex session filter cleared")))
+
 (defun codex-ide-status-mode-show-more ()
   "Load and display the next page in the current status buffer."
   (interactive)
@@ -1273,6 +1355,7 @@ When RELOAD is non-nil, reload thread metadata before rendering."
       (setq-local default-directory directory)
       (setq-local codex-ide-status-mode--directory directory
                   codex-ide-status-mode--scope 'project
+                  codex-ide-status-mode--filter ""
                   codex-ide-status-mode--query-session nil)
       (codex-ide-status-mode--render-buffer directory :is-refresh t))
     (pop-to-buffer buffer)))
@@ -1290,6 +1373,7 @@ When RELOAD is non-nil, reload thread metadata before rendering."
       (setq-local default-directory directory
                   codex-ide-status-mode--directory directory
                   codex-ide-status-mode--scope 'all
+                  codex-ide-status-mode--filter ""
                   codex-ide-status-mode--query-session nil)
       (codex-ide-status-mode--render-buffer directory :is-refresh t))
     (pop-to-buffer buffer)))
