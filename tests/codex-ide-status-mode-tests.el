@@ -385,7 +385,7 @@
 					(beginning-of-line)
 					(should-not (invisible-p (point))))))))))
 
-(ert-deftest codex-ide-status-heading-previews-are-single-line-and-dimmed ()
+(ert-deftest codex-ide-status-heading-previews-use-only-first-line ()
   (let* ((root-dir (codex-ide-test--make-temp-project))
          (project-dir (expand-file-name "alpha" root-dir))
          (long-preview "This is a deliberately long preview line that should be truncated in the heading only")
@@ -420,8 +420,13 @@
 					  (should-not (eq (get-text-property (match-beginning 0) 'face)
 							  'font-lock-doc-face))
 					  (should-not (string-match-p "\n" preview))
-					  (should (string-match-p (regexp-quote long-preview)
+					(should (string-match-p (regexp-quote long-preview)
 								  (buffer-string)))))))))))
+
+(ert-deftest codex-ide-status-preview-line-trims-multiline-preview ()
+  (should (equal (codex-ide-status-mode--preview-line
+                  "First preview line\nSecond preview line")
+                 "First preview line")))
 
 (ert-deftest codex-ide-status-buffer-heading-uses-first-submitted-prompt-text ()
   (let* ((root-dir (codex-ide-test--make-temp-project))
@@ -501,7 +506,7 @@
 								  t))
 					  (should (button-at (match-beginning 0)))
 					  (should (search-forward "* Number of Prompts: 2" buffer-section-end t))
-					  (should (search-forward "* Last Prompt: Explain↵failure" buffer-section-end t))
+					  (should (search-forward "* Last Prompt: Explain\nfailure" buffer-section-end t))
 					  (should (codex-ide-status-mode-test--face-includes-p
 						   (get-text-property (match-beginning 0) 'face)
 						   'codex-ide-status-expanded-content-face))
@@ -584,7 +589,7 @@
 					(should (search-forward (buffer-name (codex-ide-session-buffer session)) nil t))
 					(should (button-at (match-beginning 0)))
 					(should (search-forward "* Number of Prompts: 2" nil t))
-					(should (search-forward "* Last Prompt: Explain↵failure" nil t))
+					(should (search-forward "* Last Prompt: Explain\nfailure" nil t))
 					(should (search-forward "* Last Response: Assistant reply" nil t)))))))))
 
 (ert-deftest codex-ide-status-thread-expanded-view-omits-buffer-details-when-unlinked ()
@@ -758,7 +763,7 @@
 					(search-forward "Submitted prompt")
 					(beginning-of-line)
 					(codex-ide-section-toggle-at-point)
-					(search-forward "* Last Response: first line↵second line")
+					(search-forward "* Last Response: first line\nsecond line")
 					(goto-char (match-beginning 0))
 					(setq expected-offset
 					      (- (point)
@@ -773,10 +778,12 @@
 						       (codex-ide-section-containing-point)))
 						   expected-offset))
 					(should (string-match-p
-						 "Last Response: first line↵second line"
+						 "Last Response: first line\nsecond line"
 						 (buffer-substring-no-properties
-						  (line-beginning-position)
-						  (line-end-position)))))))))))
+						  (codex-ide-section-heading-start
+						   (codex-ide-section-containing-point))
+						  (codex-ide-section-end
+						   (codex-ide-section-containing-point))))))))))))
 
 (ert-deftest codex-ide-status-refresh-keeps-existing-render-when-prepare-fails ()
   (let* ((root-dir (codex-ide-test--make-temp-project))
@@ -1473,12 +1480,18 @@
         (codex-ide-status-mode-quit)
         (should quit)))))
 
-(ert-deftest codex-ide-status-all-renders-and-resumes-in-thread-directory ()
+(ert-deftest codex-ide-status-all-renders-and-resumes-with-thread-directory ()
   (let* ((directory "/tmp/status-query")
          (thread-directory "/tmp/original-project")
+         (preview
+          (concat "[Emacs prompt context]\n"
+                  "Buffer: source.el\n"
+                  "[/Emacs prompt context]\n\n"
+                  "First human message\nSecond human message"))
          (thread `((id . "thread-all")
+                   (name . "Persistent name")
                    (cwd . ,thread-directory)
-                   (preview . "First human message")
+                   (preview . ,preview)
                    (createdAt . 10)
                    (updatedAt . 20)))
          (visited nil))
@@ -1496,7 +1509,20 @@
          directory :is-refresh t :reload nil)
         (should (equal (codex-ide-status-mode-test--header-line-string)
                        "All sessions | 1 session"))
-        (should (search-forward "First human message" nil t))
+        (should (search-forward
+                 "Persistent name First human message"
+                 nil t))
+        (should-not (search-forward "Emacs prompt context" nil t))
+        (beginning-of-line)
+        (codex-ide-section-toggle-at-point)
+        (should (search-forward "First human message\nSecond human message" nil t))
+        (should (search-forward "* Thread ID: thread-all" nil t))
+        (should (search-forward
+                 (format "* Directory: %s"
+                         (abbreviate-file-name thread-directory))
+                 nil t))
+        (goto-char (point-min))
+        (search-forward "Persistent name")
         (beginning-of-line)
         (codex-ide-status-mode-display-session-at-point)
         (should (equal visited (list "thread-all" thread-directory)))))))

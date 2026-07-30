@@ -673,15 +673,20 @@ The plist contains `:text', `:start', and `:end'."
                             (point-max))))
           (codex-ide-status-mode--last-prompt-data-before session search-end))))))
 
-(defun codex-ide-status-mode--preview-line (value)
-  "Return a one-line preview for VALUE."
-  (let ((preview (replace-regexp-in-string
-                  "[\n\r]+"
-                  "↵"
-                  (codex-ide--thread-choice-preview (or value "")))))
+(defun codex-ide-status-mode--preview-text (value)
+  "Return preview text for VALUE with normalized line endings."
+  (let ((preview
+         (replace-regexp-in-string
+          "\r\n?"
+          "\n"
+          (codex-ide--thread-choice-preview (or value "")))))
     (if (string-empty-p preview)
         "Untitled"
       preview)))
+
+(defun codex-ide-status-mode--preview-line (value)
+  "Return the first line of preview VALUE."
+  (car (split-string (codex-ide-status-mode--preview-text value) "\n")))
 
 (defun codex-ide-status-mode--plain-text (value)
   "Return VALUE without text properties."
@@ -718,6 +723,18 @@ The plist contains `:text', `:start', and `:end'."
          (codex-ide--thread-choice-preview
           (or (alist-get 'preview thread) ""))))
     (if (string-empty-p preview) "Untitled" preview)))
+
+(defun codex-ide-status-mode--thread-heading-preview (thread)
+  "Return the compact heading preview for THREAD."
+  (let ((preview
+         (codex-ide-status-mode--preview-line
+          (codex-ide-status-mode--full-thread-preview thread))))
+    (if-let* ((name (codex-ide-status-mode--thread-name thread)))
+        (concat
+         (propertize name 'face 'codex-ide-session-list-id-face)
+         " "
+         preview)
+      preview)))
 
 (defun codex-ide-status-mode--filter-match-p (thread)
   "Return non-nil when THREAD matches the active status filter."
@@ -1092,7 +1109,12 @@ Return nil when there is no agent reply."
 
 (defun codex-ide-status-mode--insert-thread-preview-body (full-preview)
   "Insert FULL-PREVIEW as plain status preview text."
-  (ignore full-preview))
+  (when (codex-ide-status-mode--all-sessions-p)
+    (let ((start (point)))
+      (insert full-preview)
+      (unless (bolp)
+        (insert "\n"))
+      (codex-ide-status-mode--apply-expanded-content-face start (point)))))
 
 (defun codex-ide-status-mode--insert-buffer-section (session)
   "Insert a child section for SESSION."
@@ -1117,10 +1139,10 @@ Return nil when there is no agent reply."
           (number-to-string prompt-count))
          (codex-ide-status-mode--insert-thread-metadata-line
           "Last Prompt"
-          (codex-ide-status-mode--preview-line last-prompt))
+          (codex-ide-status-mode--preview-text last-prompt))
          (codex-ide-status-mode--insert-thread-metadata-line
           "Last Response"
-          (codex-ide-status-mode--preview-line
+          (codex-ide-status-mode--preview-text
            (codex-ide-status-mode--plain-text last-response)))
          (codex-ide-status-mode--apply-expanded-content-face start (point))))
      t)))
@@ -1133,9 +1155,6 @@ Return nil when there is no agent reply."
                    "stored"))
          (label (codex-ide-renderer-status-label status))
          (thread-id (alist-get 'id thread))
-         (raw-preview (or (alist-get 'name thread)
-                          (alist-get 'preview thread)
-                          "Untitled"))
          (first-prompt (when session
                          (codex-ide-status-mode--first-submitted-prompt-text session)))
          (prompt-count (when session
@@ -1149,8 +1168,13 @@ Return nil when there is no agent reply."
          (updated-text (or (codex-ide-human-time-ago (alist-get 'updatedAt thread)) ""))
          (status-width (plist-get layout :status-width))
          (updated-width (plist-get layout :updated-width))
-         (preview (codex-ide-status-mode--preview-line
-                   (or first-prompt raw-preview)))
+         (preview (if (codex-ide-status-mode--all-sessions-p)
+                      (codex-ide-status-mode--thread-heading-preview thread)
+                    (codex-ide-status-mode--preview-line
+                     (or first-prompt
+                         (alist-get 'name thread)
+                         (alist-get 'preview thread)
+                         "Untitled"))))
          (title (concat
                  (codex-ide-status-mode--format-heading-status
                   (codex-ide-status-mode--pad-heading-part label status-width)
@@ -1164,7 +1188,17 @@ Return nil when there is no agent reply."
      'thread thread title
      (lambda (_section)
        (let ((start (point)))
+         (when (codex-ide-status-mode--all-sessions-p)
+           (codex-ide-status-mode--insert-thread-preview-body
+            (codex-ide-status-mode--full-thread-preview thread)))
          (codex-ide-status-mode--insert-thread-metadata-line "Thread ID" thread-id)
+         (when (codex-ide-status-mode--all-sessions-p)
+           (codex-ide-status-mode--insert-thread-metadata-line
+            "Directory"
+            (if (or (not (stringp directory))
+                    (string-empty-p directory))
+                "Unknown"
+              (abbreviate-file-name directory))))
          (codex-ide-status-mode--insert-thread-metadata-line
           "Created"
           (codex-ide--format-thread-updated-at (alist-get 'createdAt thread)))
@@ -1178,10 +1212,10 @@ Return nil when there is no agent reply."
             (number-to-string prompt-count))
            (codex-ide-status-mode--insert-thread-metadata-line
             "Last Prompt"
-            (codex-ide-status-mode--preview-line last-prompt))
+            (codex-ide-status-mode--preview-text last-prompt))
            (codex-ide-status-mode--insert-thread-metadata-line
             "Last Response"
-            (codex-ide-status-mode--preview-line
+            (codex-ide-status-mode--preview-text
              (codex-ide-status-mode--plain-text (or last-response "")))))
          (codex-ide-status-mode--apply-expanded-content-face start (point))))
      t)))
