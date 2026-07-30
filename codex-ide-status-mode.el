@@ -77,6 +77,9 @@ while 1 would fully replace the background with the foreground color."
 (defvar-local codex-ide-status-mode--threads nil
   "Stored thread metadata loaded into the current status buffer.")
 
+(defvar-local codex-ide-status-mode--next-cursor nil
+  "Cursor for the next page of stored threads.")
+
 (defvar-local codex-ide-status-mode--query-session nil
   "App-server session used to query stored thread metadata.")
 
@@ -1127,39 +1130,78 @@ Return nil when there is no agent reply."
          (codex-ide-status-mode--apply-expanded-content-face start (point))))
      t)))
 
-(defun codex-ide-status-mode--load-threads (directory)
-  "Load stored threads for the current scope using DIRECTORY."
-  (setq codex-ide-status-mode--query-session
-        (codex-ide--ensure-query-session-for-thread-selection directory))
-  (setq codex-ide-status-mode--threads
-        (if (codex-ide-status-mode--all-sessions-p)
-            (append
-             (alist-get
-              'data
-              (codex-ide--list-threads-page
-               codex-ide-status-mode--query-session
-               :all-directories t))
-             nil)
-          (codex-ide--thread-list-data
-           codex-ide-status-mode--query-session))))
+(defun codex-ide-status-mode--live-query-session ()
+  "Return a live query session for the current status buffer."
+  (if (and codex-ide-status-mode--query-session
+           (process-live-p
+            (codex-ide-session-process codex-ide-status-mode--query-session)))
+      codex-ide-status-mode--query-session
+    (setq codex-ide-status-mode--query-session
+          (codex-ide--ensure-query-session-for-thread-selection
+           codex-ide-status-mode--directory))))
 
-(cl-defun codex-ide-status-mode--render-sections (directory &key (is-refresh nil))
+(defun codex-ide-status-mode--request-page (&optional cursor)
+  "Request a thread page for the current status scope after CURSOR."
+  (codex-ide--list-threads-page
+   (codex-ide-status-mode--live-query-session)
+   :all-directories (codex-ide-status-mode--all-sessions-p)
+   :cursor cursor
+   :limit codex-ide-thread-list-default-limit
+   :sort-key "updated_at"))
+
+(defun codex-ide-status-mode--reload-threads ()
+  "Reload the first page of threads for the current status scope."
+  (let ((page (codex-ide-status-mode--request-page)))
+    (setq codex-ide-status-mode--threads
+          (append (alist-get 'data page) nil)
+          codex-ide-status-mode--next-cursor
+          (alist-get 'nextCursor page))))
+
+(defun codex-ide-status-mode--append-threads (threads)
+  "Append previously unseen THREADS to the current status cache."
+  (let ((known (make-hash-table :test #'equal))
+        (new nil))
+    (dolist (thread codex-ide-status-mode--threads)
+      (puthash (alist-get 'id thread) t known))
+    (dolist (thread threads)
+      (unless (gethash (alist-get 'id thread) known)
+        (puthash (alist-get 'id thread) t known)
+        (push thread new)))
+    (setq codex-ide-status-mode--threads
+          (append codex-ide-status-mode--threads (nreverse new)))))
+
+(defun codex-ide-status-mode--insert-show-more-button ()
+  "Insert an action for loading the next page when one is available."
+  (when codex-ide-status-mode--next-cursor
+    (unless (bolp)
+      (insert "\n"))
+    (insert "\n")
+    (insert-text-button
+     "Show more sessions"
+     'follow-link t
+     'help-echo "Load the next page of Codex sessions"
+     'action (lambda (_button)
+               (codex-ide-status-mode-show-more)))
+    (insert "\n")))
+
+(cl-defun codex-ide-status-mode--render-sections
+    (directory &key (is-refresh nil) (reload t))
   "Render status sections for DIRECTORY and return the session count.
 
-When IS-REFRESH is non-nil, existing buffer content will be erased/reset."
-  (let* ((threads nil)
-         (layout nil)
-         (index 0))
-    (codex-ide--prepare-session-operations)
-    (when is-refresh
-      (erase-buffer)
-      (codex-ide-section-reset))
-    (codex-ide-status-mode--refresh-striped-heading-face)
-    (codex-ide-status-mode--load-threads directory)
-    (setq threads
+When IS-REFRESH is non-nil, existing buffer content will be erased/reset.
+When RELOAD is non-nil, reload thread metadata before rendering."
+  (codex-ide--prepare-session-operations)
+  (when reload
+    (codex-ide-status-mode--reload-threads))
+  (when is-refresh
+    (erase-buffer)
+    (codex-ide-section-reset))
+  (codex-ide-status-mode--refresh-striped-heading-face)
+  (let* ((threads
           (codex-ide-status-mode--sort-threads-by-updated
            codex-ide-status-mode--threads))
-    (setq layout (codex-ide-status-mode--heading-layout threads directory))
+         (layout (codex-ide-status-mode--heading-layout threads directory))
+         (index 0))
     (dolist (thread threads)
       (setq index (1+ index))
       (let* ((thread-directory
@@ -1171,16 +1213,20 @@ When IS-REFRESH is non-nil, existing buffer content will be erased/reset."
                thread thread-directory layout)))
         (when (zerop (% index 2))
           (codex-ide-status-mode--apply-heading-stripe section))))
+    (codex-ide-status-mode--insert-show-more-button)
     (length threads)))
 
-(cl-defun codex-ide-status-mode--render-buffer (directory &key (is-refresh nil))
-  "Render the status buffer for DIRECTORY."
+(cl-defun codex-ide-status-mode--render-buffer
+    (directory &key (is-refresh nil) (reload t))
+  "Render the status buffer for DIRECTORY.
+When RELOAD is non-nil, reload thread metadata before rendering."
   (let ((inhibit-read-only t))
     (setq-local header-line-format
                 (codex-ide-status-mode--header-line
                  directory
                  (codex-ide-status-mode--render-sections directory
-                                                         :is-refresh is-refresh)))
+                                                         :is-refresh is-refresh
+                                                         :reload reload)))
     (goto-char (point-min))))
 
 ;;;###autoload
@@ -1194,6 +1240,24 @@ When IS-REFRESH is non-nil, existing buffer content will be erased/reset."
    (lambda ()
      (codex-ide-status-mode--render-buffer codex-ide-status-mode--directory
                                            :is-refresh t))))
+
+(defun codex-ide-status-mode-show-more ()
+  "Load and display the next page in the current status buffer."
+  (interactive)
+  (unless codex-ide-status-mode--next-cursor
+    (user-error "No more Codex sessions are available"))
+  (let ((page
+         (codex-ide-status-mode--request-page
+          codex-ide-status-mode--next-cursor)))
+    (codex-ide-status-mode--append-threads
+     (append (alist-get 'data page) nil))
+    (setq codex-ide-status-mode--next-cursor
+          (alist-get 'nextCursor page))
+    (codex-ide-section-preserve-view-state
+     #'codex-ide-status-mode--section-identity
+     (lambda ()
+       (codex-ide-status-mode--render-buffer
+        codex-ide-status-mode--directory :is-refresh t :reload nil)))))
 
 ;;;###autoload
 (defun codex-ide-status ()
