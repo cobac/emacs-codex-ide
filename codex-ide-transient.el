@@ -37,6 +37,8 @@
 
 (autoload 'codex-ide-session-buffer-list "codex-ide-session-buffer-list"
   "Show a tabulated list of live Codex session buffers." t)
+(autoload 'codex-ide-status-all "codex-ide-status-mode"
+  "Show the Codex status buffer for sessions from all recorded directories." t)
 (autoload 'codex-ide-status "codex-ide-status-mode"
   "Show the Codex status buffer for the current project." t)
 (autoload 'codex-ide-session-diff-open "codex-ide-diff-view"
@@ -464,6 +466,7 @@
 			   ("r" "Reset current session" codex-ide-reset-current-session
 			    :if codex-ide--in-session-buffer-p)]
 			  ["Manage"
+			   ("a" "All resumable sessions" codex-ide-status-all)
 			   ("m" "Manage sessions" codex-ide-status)
 			   ("l" "Live session buffers" codex-ide-session-buffer-list)
 			   ("D" "Session diff (live/transcript/pinned)" codex-ide-session-diff-open)]

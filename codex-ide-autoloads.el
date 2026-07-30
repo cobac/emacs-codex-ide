@@ -380,6 +380,8 @@ while 1 would fully replace the background with the foreground color.")
 (fn &optional IGNORE-AUTO NOCONFIRM)" t)
 (autoload 'codex-ide-status "codex-ide-status-mode"
   "Show the Codex status buffer for the current project." t)
+(autoload 'codex-ide-status-all "codex-ide-status-mode"
+  "Show the Codex status buffer for sessions from all recorded directories." t)
 (register-definition-prefixes "codex-ide-status-mode" '("codex-ide-status-mode"))
 
 
