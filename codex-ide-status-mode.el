@@ -138,6 +138,9 @@ while 1 would fully replace the background with the foreground color."
 (define-key codex-ide-status-mode-map (kbd "g") nil)
 (define-key codex-ide-status-mode-map (kbd "g r") #'codex-ide-status-mode-refresh)
 (define-key codex-ide-status-mode-map
+            [mouse-1]
+            #'codex-ide-status-mode-mouse-display-session)
+(define-key codex-ide-status-mode-map
             (kbd "RET")
             #'codex-ide-status-mode-display-session-at-point)
 (define-key codex-ide-status-mode-map
@@ -398,7 +401,8 @@ the sessions that were loaded before the switch."
 (defun codex-ide-status-mode--actionable-section-at-point ()
   "Return the actionable status section at point.
 Only child `buffer' and `thread' sections support visit and delete actions."
-  (let ((section (codex-ide-section-at-point)))
+  (let ((section (or (codex-ide-section-at-point)
+                     (codex-ide-section-containing-point))))
     (unless section
       (user-error "No status entry at point"))
     (unless (memq (codex-ide-section-type section) '(buffer thread))
@@ -559,6 +563,15 @@ Only child `buffer' and `thread' sections support visit and delete actions."
   (interactive)
   (codex-ide-status-mode--visit-section
    (codex-ide-status-mode--actionable-section-at-point)))
+
+(defun codex-ide-status-mode-mouse-display-session (event)
+  "Display the session at mouse EVENT."
+  (interactive "e")
+  (mouse-set-point event)
+  (if-let* ((button (button-at (point))))
+      (button-activate button)
+    (when (codex-ide-section-containing-point)
+      (codex-ide-status-mode-display-session-at-point))))
 
 (defun codex-ide-status-mode-display-session-at-point-other-window ()
   "Display the session for the actionable status entry at point in another window."
@@ -1369,7 +1382,7 @@ Return nil when there is no agent reply."
             (codex-ide-status-mode--preview-text last-prompt))
            (codex-ide-status-mode--insert-thread-metadata-line
             "Last Response"
-            (codex-ide-status-mode--preview-text
+             (codex-ide-status-mode--preview-text
              (codex-ide-status-mode--plain-text (or last-response "")))))
          (codex-ide-status-mode--apply-expanded-content-face start (point))))
      t)))
