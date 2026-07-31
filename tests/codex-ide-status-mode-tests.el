@@ -1507,7 +1507,8 @@
                    (preview . ,preview)
                    (createdAt . 10)
                    (updatedAt . 20)))
-         (visited nil))
+         (visited nil)
+         (opened-directory nil))
     (with-temp-buffer
       (codex-ide-status-mode)
       (setq-local codex-ide-status-mode--directory directory
@@ -1517,7 +1518,10 @@
                  (lambda () nil))
                 ((symbol-function 'codex-ide--show-or-resume-thread)
                  (lambda (thread-id cwd)
-                   (setq visited (list thread-id cwd)))))
+                   (setq visited (list thread-id cwd))))
+                ((symbol-function 'find-file)
+                 (lambda (path)
+                   (setq opened-directory path))))
         (codex-ide-status-mode--render-buffer
          directory :is-refresh t :reload nil)
         (should (equal (codex-ide-status-mode-test--header-line-string)
@@ -1534,6 +1538,10 @@
                  (format "* Directory: %s"
                          (abbreviate-file-name thread-directory))
                  nil t))
+        (let ((button (button-at (line-beginning-position))))
+          (should button)
+          (button-activate button)
+          (should (equal opened-directory thread-directory)))
         (goto-char (point-min))
         (search-forward "Persistent name")
         (beginning-of-line)

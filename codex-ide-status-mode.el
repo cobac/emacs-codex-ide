@@ -1131,6 +1131,28 @@ Return nil when there is no agent reply."
     (insert "\n")
     (codex-ide-status-mode--apply-expanded-content-face start (point))))
 
+(defun codex-ide-status-mode--insert-directory-metadata-line (directory)
+  "Insert a clickable metadata line for DIRECTORY."
+  (let ((start (point)))
+    (insert (propertize "* Directory:"
+                        'face
+                        'codex-ide-status-metadata-label-face))
+    (insert " ")
+    (if (or (not (stringp directory))
+            (string-empty-p directory))
+        (insert "Unknown")
+      (insert (propertize (abbreviate-file-name directory) 'face 'button))
+      (make-text-button
+       start (point)
+       'follow-link t
+       'help-echo "Open directory"
+       'mouse-face 'highlight
+       'keymap (codex-ide-nav-button-keymap)
+       'action (lambda (_button)
+                 (find-file directory))))
+    (insert "\n")
+    (codex-ide-status-mode--apply-expanded-content-face start (point))))
+
 (defun codex-ide-status-mode--thread-preview-body (full-preview)
   "Return FULL-PREVIEW normalized for status display."
   (or (codex-ide--thread-read-display-user-text full-preview)
@@ -1226,12 +1248,7 @@ Return nil when there is no agent reply."
             (codex-ide-status-mode--full-thread-preview thread)))
          (codex-ide-status-mode--insert-thread-metadata-line "Thread ID" thread-id)
          (when (codex-ide-status-mode--all-sessions-p)
-           (codex-ide-status-mode--insert-thread-metadata-line
-            "Directory"
-            (if (or (not (stringp directory))
-                    (string-empty-p directory))
-                "Unknown"
-              (abbreviate-file-name directory))))
+           (codex-ide-status-mode--insert-directory-metadata-line directory))
          (codex-ide-status-mode--insert-thread-metadata-line
           "Created"
           (codex-ide--format-thread-updated-at (alist-get 'createdAt thread)))
