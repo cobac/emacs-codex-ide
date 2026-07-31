@@ -94,6 +94,26 @@ while 1 would fully replace the background with the foreground color."
 (defvar-local codex-ide-status-mode--event-listener nil
   "Function object registered on `codex-ide-session-event-hook' for this buffer.")
 
+(defvar-local codex-ide-status-text-mode--saved-state nil
+  "Status buffer state saved while the buffer uses `text-mode'.")
+
+(put 'codex-ide-status-text-mode--saved-state 'permanent-local t)
+
+(defvar codex-ide-status-text-mode--return-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-t") #'codex-ide-status-text-mode)
+    map)
+  "Keymap used to return from `text-mode' to a Codex status buffer.")
+
+(define-minor-mode codex-ide-status-text-mode--return-mode
+  "Keep the status text-mode toggle available while viewing status text."
+  :keymap codex-ide-status-text-mode--return-mode-map)
+
+(defvar codex-ide-status-text-mode--emulation-map-alist
+  `((codex-ide-status-text-mode--return-mode
+     . ,codex-ide-status-text-mode--return-mode-map))
+  "High-precedence map for returning from status `text-mode'.")
+
 (defvar codex-ide-status-mode--theme-refresh-buffers nil
   "Live buffers currently using `codex-ide-status-mode' theme refresh hooks.")
 
@@ -112,6 +132,7 @@ while 1 would fully replace the background with the foreground color."
 (define-key codex-ide-status-mode-map (kbd "l") #'codex-ide-status-mode-refresh)
 (define-key codex-ide-status-mode-map (kbd "/") #'codex-ide-status-mode-filter)
 (define-key codex-ide-status-mode-map (kbd "s") #'codex-ide-status-mode-filter)
+(define-key codex-ide-status-mode-map (kbd "C-t") #'codex-ide-status-text-mode)
 (define-key codex-ide-status-mode-map (kbd "C-g") #'codex-ide-status-mode-quit)
 (define-key codex-ide-status-mode-map (kbd "q") #'codex-ide-status-mode-quit)
 (define-key codex-ide-status-mode-map (kbd "g") nil)
@@ -169,6 +190,89 @@ while 1 would fully replace the background with the foreground color."
   (codex-ide-status-mode--setup-theme-refresh)
   (add-hook 'window-size-change-functions
             #'codex-ide-status-mode--handle-window-size-change nil t))
+
+(defun codex-ide-status-text-mode--face-runs ()
+  "Return the non-nil `face' property runs in the current buffer."
+  (let ((position (point-min))
+        runs)
+    (while (< position (point-max))
+      (let* ((face (get-text-property position 'face))
+             (next (or (next-single-property-change
+                        position 'face nil (point-max))
+                       (point-max))))
+        (when face
+          (push (list position next face) runs))
+        (setq position next)))
+    (nreverse runs)))
+
+(defun codex-ide-status-text-mode--restore-faces (runs)
+  "Restore status face property RUNS in the current buffer."
+  (with-silent-modifications
+    (remove-text-properties (point-min) (point-max) '(face nil))
+    (dolist (run runs)
+      (add-text-properties
+       (min (nth 0 run) (point-max))
+       (min (nth 1 run) (point-max))
+       (list 'face (nth 2 run))))))
+
+(defun codex-ide-status-text-mode ()
+  "Switch between a Codex status buffer and read-only `text-mode'.
+Returning to `codex-ide-status-mode' restores the structured status view from
+the sessions that were loaded before the switch."
+  (interactive)
+  (cond
+   ((derived-mode-p 'codex-ide-status-mode)
+    (setq codex-ide-status-text-mode--saved-state
+          (list :directory codex-ide-status-mode--directory
+                :scope codex-ide-status-mode--scope
+                :filter codex-ide-status-mode--filter
+                :threads codex-ide-status-mode--threads
+                :next-cursor codex-ide-status-mode--next-cursor
+                :query-session codex-ide-status-mode--query-session
+                :truncate-lines truncate-lines
+                :word-wrap word-wrap
+                :face-runs (codex-ide-status-text-mode--face-runs)
+                :section-view-state
+                (codex-ide-section-capture-view-state
+                 #'codex-ide-status-mode--section-identity)))
+    (text-mode)
+    (when font-lock-mode
+      (font-lock-mode -1))
+    (codex-ide-status-text-mode--restore-faces
+     (plist-get codex-ide-status-text-mode--saved-state :face-runs))
+    (codex-ide-status-text-mode--return-mode 1)
+    (setq-local emulation-mode-map-alists
+                (cons 'codex-ide-status-text-mode--emulation-map-alist
+                      (remove 'codex-ide-status-text-mode--emulation-map-alist
+                              emulation-mode-map-alists)))
+    (message "Switched to text-mode"))
+   ((and (eq major-mode 'text-mode)
+         codex-ide-status-text-mode--saved-state)
+    (let* ((state codex-ide-status-text-mode--saved-state)
+           (view-state (copy-tree (plist-get state :section-view-state)))
+           (text-point (point)))
+      (setf (alist-get 'point-path view-state) nil
+            (alist-get 'point-offset view-state) nil
+            (alist-get 'point view-state) text-point)
+      (codex-ide-status-text-mode--return-mode -1)
+      (codex-ide-status-mode)
+      (setq-local codex-ide-status-mode--directory (plist-get state :directory)
+                  codex-ide-status-mode--scope (plist-get state :scope)
+                  codex-ide-status-mode--filter (plist-get state :filter)
+                  codex-ide-status-mode--threads (plist-get state :threads)
+                  codex-ide-status-mode--next-cursor (plist-get state :next-cursor)
+                  codex-ide-status-mode--query-session (plist-get state :query-session)
+                  truncate-lines (plist-get state :truncate-lines)
+                  word-wrap (plist-get state :word-wrap))
+      (codex-ide-status-mode--render-buffer
+       codex-ide-status-mode--directory :is-refresh t :reload nil)
+      (codex-ide-section-restore-view-state
+       view-state
+       #'codex-ide-status-mode--section-identity)
+      (setq codex-ide-status-text-mode--saved-state nil)
+      (message "Switched to codex-ide-status-mode")))
+   (t
+    (user-error "Not in a Codex status or status text buffer"))))
 
 (defconst codex-ide-status-mode--session-events
   '(created destroyed thread-attached status-changed turn-started

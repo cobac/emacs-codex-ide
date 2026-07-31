@@ -104,6 +104,111 @@
     (should line-move-visual)
     (should-not visual-line-mode)))
 
+(ert-deftest codex-ide-status-text-mode-toggles-viewing-and-restores-status-state ()
+  (let ((directory "/tmp/project/")
+        (threads '(((id . "thread-1"))))
+        (query-session 'query-session)
+        rendered)
+    (with-temp-buffer
+      (cl-letf (((symbol-function 'codex-ide-status-mode--render-buffer)
+                 (lambda (render-directory &rest args)
+                   (setq rendered (cons render-directory args)))))
+        (codex-ide-status-mode)
+        (setq-local codex-ide-status-mode--directory directory
+                    codex-ide-status-mode--scope 'all
+                    codex-ide-status-mode--filter "needle"
+                    codex-ide-status-mode--threads threads
+                    codex-ide-status-mode--next-cursor "page-2"
+                    codex-ide-status-mode--query-session query-session
+                    truncate-lines nil
+                    word-wrap t)
+        (let ((inhibit-read-only t))
+          (insert "first line\nsecond line"))
+        (goto-char (point-min))
+        (let (text-point)
+          (codex-ide-status-text-mode)
+          (should (eq major-mode 'text-mode))
+          (should buffer-read-only)
+          (should codex-ide-status-text-mode--return-mode)
+          (should (eq (key-binding (kbd "C-t"))
+                      #'codex-ide-status-text-mode))
+          (goto-char (point-max))
+          (setq text-point (point))
+          (codex-ide-status-text-mode)
+          (should (derived-mode-p 'codex-ide-status-mode))
+          (should buffer-read-only)
+          (should (equal codex-ide-status-mode--directory directory))
+          (should (eq codex-ide-status-mode--scope 'all))
+          (should (equal codex-ide-status-mode--filter "needle"))
+          (should (equal codex-ide-status-mode--threads threads))
+          (should (equal codex-ide-status-mode--next-cursor "page-2"))
+          (should (eq codex-ide-status-mode--query-session query-session))
+          (should-not truncate-lines)
+          (should word-wrap)
+          (should (= (point) text-point))
+          (should-not codex-ide-status-text-mode--saved-state)
+          (should (equal rendered
+                         (list directory :is-refresh t :reload nil))))))))
+
+(ert-deftest codex-ide-status-text-mode-return-binding-precedes-emulation-maps ()
+  (let* ((competing-mode (make-symbol "competing-mode"))
+         (competing-map (make-sparse-keymap))
+         (competing-alist (make-symbol "competing-emulation-map-alist"))
+         (emulation-mode-map-alists (list competing-alist)))
+    (define-key competing-map (kbd "C-t") #'ignore)
+    (set competing-mode t)
+    (set competing-alist (list (cons competing-mode competing-map)))
+    (unwind-protect
+        (with-temp-buffer
+          (codex-ide-status-mode)
+          (codex-ide-status-text-mode)
+          (should (eq (key-binding (kbd "C-t"))
+                      #'codex-ide-status-text-mode)))
+      (makunbound competing-mode)
+      (makunbound competing-alist))))
+
+(ert-deftest codex-ide-status-text-mode-preserves-rendered-faces ()
+  (with-temp-buffer
+    (codex-ide-status-mode)
+    (let ((inhibit-read-only t))
+      (insert (propertize "status text" 'face 'font-lock-keyword-face)
+              " plain text"))
+    (codex-ide-status-text-mode)
+    (font-lock-ensure)
+    (should-not font-lock-mode)
+    (should (eq (get-text-property (point-min) 'face)
+                'font-lock-keyword-face))
+    (should-not (get-text-property (1- (point-max)) 'face))))
+
+(ert-deftest codex-ide-status-text-mode-preserves-expanded-sections ()
+  (let ((threads '(((id . "thread-1")
+                    (preview . "First thread")
+                    (updatedAt . 20))
+                   ((id . "thread-2")
+                    (preview . "Second thread")
+                    (updatedAt . 10)))))
+    (with-temp-buffer
+      (codex-ide-status-mode)
+      (setq-local codex-ide-status-mode--directory temporary-file-directory
+                  codex-ide-status-mode--scope 'all
+                  codex-ide-status-mode--threads threads)
+      (cl-letf (((symbol-function 'codex-ide--prepare-session-operations)
+                 #'ignore))
+        (codex-ide-status-mode--render-buffer
+         temporary-file-directory :is-refresh t :reload nil)
+        (goto-char (point-min))
+        (codex-ide-section-toggle-at-point)
+        (should-not (codex-ide-section-hidden
+                     (nth 0 codex-ide-section--root-sections)))
+        (should (codex-ide-section-hidden
+                 (nth 1 codex-ide-section--root-sections)))
+        (codex-ide-status-text-mode)
+        (codex-ide-status-text-mode)
+        (should-not (codex-ide-section-hidden
+                     (nth 0 codex-ide-section--root-sections)))
+        (should (codex-ide-section-hidden
+                 (nth 1 codex-ide-section--root-sections)))))))
+
 (ert-deftest codex-ide-status-refresh-preserves-window-point-from-other-current-buffer ()
   (let ((status-buffer (get-buffer-create " *codex-ide-status-refresh-point*"))
         (other-buffer (get-buffer-create " *codex-ide-status-refresh-other*")))
@@ -1435,6 +1540,8 @@
               #'codex-ide-status-mode-filter))
   (should (eq (lookup-key codex-ide-status-mode-map (kbd "s"))
               #'codex-ide-status-mode-filter))
+  (should (eq (lookup-key codex-ide-status-mode-map (kbd "C-t"))
+              #'codex-ide-status-text-mode))
   (should (eq (lookup-key codex-ide-status-mode-map (kbd "C-g"))
               #'codex-ide-status-mode-quit))
   (should (eq (lookup-key codex-ide-status-mode-map (kbd "q"))
