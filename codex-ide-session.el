@@ -196,11 +196,13 @@
     (unless (equal name (codex-ide--session-default-buffer-name session))
       name)))
 
-(defun codex-ide--sync-session-buffer-name (session)
-  "Persist SESSION's custom buffer name as its Codex thread name."
+(defun codex-ide--sync-session-buffer-name (session &optional name)
+  "Persist SESSION's buffer NAME as its Codex thread name.
+When NAME is nil, persist only a custom buffer name."
   (when-let* (((process-live-p (codex-ide-session-process session)))
               (thread-id (codex-ide-session-thread-id session))
-              (name (codex-ide--session-custom-buffer-name session))
+              (name (or name
+                        (codex-ide--session-custom-buffer-name session)))
               ((not (equal name
                            (codex-ide--session-metadata-get
                             session
@@ -247,8 +249,9 @@ With UNIQUE non-nil, generate a unique name when NEWNAME is already in use."
     (unless (and session
                  (eq (current-buffer) (codex-ide-session-buffer session)))
       (user-error "This command must be run from a Codex session buffer"))
-    (prog1 (rename-buffer newname unique)
-      (codex-ide--sync-session-buffer-name session))))
+    (let ((name (rename-buffer newname unique)))
+      (codex-ide--sync-session-buffer-name session name)
+      name)))
 
 (defun codex-ide--teardown-session (session &optional kill-log-buffer)
   "Stop SESSION and clear its internal state.

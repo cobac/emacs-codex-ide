@@ -9976,6 +9976,43 @@
                                  "Persistent buffer")))))
       (kill-buffer buffer))))
 
+(ert-deftest codex-ide-rename-session-buffer-persists-generated-default-name ()
+  (let* ((directory (make-temp-file "codex-ide-name-test-" t))
+         (buffer
+          (generate-new-buffer
+           (codex-ide--session-buffer-name directory)))
+         (session
+          (make-codex-ide-session
+           :buffer buffer
+           :directory (codex-ide--normalize-directory directory)
+           :process 'fake-process
+           :thread-id "thread-1"))
+         (default-name (codex-ide--session-default-buffer-name session))
+         (captured nil))
+    (unwind-protect
+        (with-current-buffer buffer
+          (rename-buffer "Investigation")
+          (codex-ide--session-metadata-put
+           session :thread-name "Investigation")
+          (setq-local codex-ide--session session)
+          (cl-letf (((symbol-function 'process-live-p)
+                     (lambda (process)
+                       (eq process 'fake-process)))
+                    ((symbol-function 'codex-ide--set-thread-name)
+                     (lambda (request-session thread-id name)
+                       (setq captured
+                             (list request-session thread-id name)))))
+            (should (equal (codex-ide-rename-session-buffer default-name)
+                           default-name))
+            (should (equal captured
+                           (list session "thread-1" default-name)))
+            (should
+             (equal (codex-ide--session-metadata-get session :thread-name)
+                    default-name))))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer))
+      (delete-directory directory))))
+
 (ert-deftest codex-ide-restore-session-buffer-name-uses-thread-metadata ()
   (let* ((buffer (generate-new-buffer "codex-default"))
          (session (make-codex-ide-session :buffer buffer)))
