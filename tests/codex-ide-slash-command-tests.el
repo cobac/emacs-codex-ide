@@ -472,6 +472,40 @@
         (should (codex-ide--input-prompt-active-p session))
         (should (string-empty-p (codex-ide--current-input session)))))))
 
+(ert-deftest codex-ide-submit-unrecorded-slash-command-restores-prompt-on-quit ()
+  (codex-ide-test-with-fixture temporary-file-directory
+    (with-temp-buffer
+      (let* ((codex-ide-slash-commands
+              '(("test" codex-ide-slash-command-test--argument-command
+                 "Test command."
+                 (:accepts-arguments t :record-transcript nil))))
+             (session
+              (make-codex-ide-session
+               :buffer (current-buffer)
+               :directory default-directory
+               :thread-id "thread-1"
+               :status "idle"))
+             (prompt "/test side question")
+             (entry (codex-ide-slash-command-resolve-prompt prompt)))
+        (codex-ide-session-mode)
+        (setq-local codex-ide--session session)
+        (codex-ide--insert-input-prompt session prompt)
+        (cl-letf
+            (((symbol-function
+              'codex-ide-slash-command-test--argument-command)
+              (lambda (&optional _argument)
+                (interactive)
+                (signal 'quit nil))))
+          (let (quit-signaled)
+            (condition-case nil
+                (codex-ide--submit-unrecorded-slash-command
+                 session prompt entry)
+              (quit
+               (setq quit-signaled t)))
+            (should quit-signaled)))
+        (should (codex-ide--input-prompt-active-p session))
+        (should (equal (codex-ide--current-input session) prompt))))))
+
 (ert-deftest codex-ide-submit-slash-command-preserves-pending-local-images ()
   (let* ((project-dir (codex-ide-test--make-temp-project))
          (image-path (codex-ide-test--make-project-file

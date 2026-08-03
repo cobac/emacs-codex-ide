@@ -7291,25 +7291,27 @@ LOCAL-IMAGES and IMAGE-DETAIL are forwarded to the queued turn payload."
 
 (defun codex-ide--submit-unrecorded-slash-command (session prompt entry)
   "Execute slash command ENTRY without adding PROMPT to SESSION's transcript."
-  (let ((buffer (codex-ide-session-buffer session)))
-    (condition-case err
-        (progn
+  (let ((buffer (codex-ide-session-buffer session))
+        (completed nil))
+    (unwind-protect
+        (prog1
+            (progn
+              (with-current-buffer buffer
+                (unless (codex-ide--input-prompt-active-p session)
+                  (codex-ide--insert-input-prompt session prompt))
+                (codex-ide--replace-current-input session ""))
+              (with-current-buffer buffer
+                (codex-ide-slash-command-execute-entry
+                 entry
+                 (codex-ide-slash-command-prompt-argument prompt)))
+              t)
+          (setq completed t))
+      (unless completed
+        (when (buffer-live-p buffer)
           (with-current-buffer buffer
-            (unless (codex-ide--input-prompt-active-p session)
-              (codex-ide--insert-input-prompt session prompt))
-            (codex-ide--replace-current-input session ""))
-          (with-current-buffer buffer
-            (codex-ide-slash-command-execute-entry
-             entry
-             (codex-ide-slash-command-prompt-argument prompt)))
-          t)
-      (error
-       (when (buffer-live-p buffer)
-         (with-current-buffer buffer
-           (if (codex-ide--input-prompt-active-p session)
-               (codex-ide--replace-current-input session prompt)
-             (codex-ide--insert-input-prompt session prompt))))
-       (signal (car err) (cdr err))))))
+            (if (codex-ide--input-prompt-active-p session)
+                (codex-ide--replace-current-input session prompt)
+              (codex-ide--insert-input-prompt session prompt))))))))
 
 (defun codex-ide--submit-slash-command (session prompt)
   "Submit PROMPT as a slash command for SESSION when applicable.

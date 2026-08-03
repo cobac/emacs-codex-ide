@@ -9,6 +9,7 @@
 (require 'ert)
 (require 'codex-ide)
 (require 'codex-ide-side)
+(require 'codex-ide-test-fixtures)
 
 (ert-deftest codex-ide-side-boundary-marks-inherited-history-reference-only ()
   (let* ((item (codex-ide-side--boundary-item))
@@ -147,6 +148,45 @@
     (should (equal (alist-get 'threadId (cdr (cadr requests)))
                    "thread-side"))
     (should-not (codex-ide--session-metadata-get parent :side-session))))
+
+(ert-deftest codex-ide-side-start-cleans-up-when-initialization-or-fork-quits ()
+  (dolist (phase '(initialize fork))
+    (let ((project-dir (codex-ide-test--make-temp-project)))
+      (codex-ide-test-with-fixture project-dir
+        (codex-ide-test-with-fake-processes
+          (let* ((parent
+                  (make-codex-ide-session
+                   :directory project-dir
+                   :thread-id "thread-parent"
+                   :status "idle"))
+                 (create-session
+                  (symbol-function 'codex-ide--create-process-session))
+                 created-side)
+            (cl-letf
+                (((symbol-function 'codex-ide--create-process-session)
+                  (lambda (&rest args)
+                    (setq created-side (apply create-session args))))
+                 ((symbol-function 'codex-ide--initialize-session)
+                  (lambda (_side)
+                    (when (eq phase 'initialize)
+                      (signal 'quit nil))))
+                 ((symbol-function 'codex-ide-side--fork)
+                  (lambda (_parent _side)
+                    (signal 'quit nil))))
+              (let (quit-signaled)
+                (condition-case nil
+                    (codex-ide-side--start parent nil)
+                  (quit
+                   (setq quit-signaled t)))
+                (should quit-signaled)))
+            (should created-side)
+            (should-not
+             (process-live-p (codex-ide-session-process created-side)))
+            (should-not
+             (buffer-live-p (codex-ide-session-buffer created-side)))
+            (should-not (memq created-side codex-ide--sessions))
+            (should-not
+             (codex-ide--session-metadata-get parent :side-session))))))))
 
 (ert-deftest codex-ide-default-session-selection-excludes-side-conversations ()
   (let* ((directory (codex-ide--normalize-directory "/tmp/project"))

@@ -238,7 +238,8 @@ requests that mutation after this boundary."
          (buffer (get-buffer-create
                   (codex-ide-side--buffer-name parent)))
          (default-directory (file-name-as-directory directory))
-         (side (codex-ide--create-process-session buffer nil)))
+         (side (codex-ide--create-process-session buffer nil))
+         (completed nil))
     (codex-ide--session-metadata-put side :side-parent parent)
     (codex-ide--session-metadata-put parent :side-session side)
     (codex-ide-side--copy-config parent side)
@@ -248,23 +249,28 @@ requests that mutation after this boundary."
                 #'codex-ide-side--handle-buffer-kill
                 nil
                 t))
-    (condition-case err
-        (progn
-          (codex-ide--initialize-session side)
-          (codex-ide-side--fork parent side)
-          (codex-ide-side--render-banner side parent)
-          (codex-ide--set-session-status side "idle" 'side-started)
-          (codex-ide--update-header-line side)
-          (codex-ide-side--display side)
-          (codex-ide-side--submit-question side question)
-          side)
-      (error
-       (codex-ide-side--clear-parent-link side)
-       (when (buffer-live-p buffer)
-         (let ((kill-buffer-query-functions nil))
-           (kill-buffer buffer)))
-       (user-error "Failed to start side conversation: %s"
-                   (error-message-string err))))))
+    (unwind-protect
+        (condition-case err
+            (prog1
+                (progn
+                  (codex-ide--initialize-session side)
+                  (codex-ide-side--fork parent side)
+                  (codex-ide-side--render-banner side parent)
+                  (codex-ide--set-session-status side "idle" 'side-started)
+                  (codex-ide--update-header-line side)
+                  (codex-ide-side--display side)
+                  (codex-ide-side--submit-question side question)
+                  side)
+              (setq completed t))
+          (error
+           (user-error "Failed to start side conversation: %s"
+                       (error-message-string err))))
+      (unless completed
+        (let ((inhibit-quit t))
+          (codex-ide-side--clear-parent-link side)
+          (when (buffer-live-p buffer)
+            (let ((kill-buffer-query-functions nil))
+              (kill-buffer buffer))))))))
 
 ;;;###autoload
 (defun codex-ide-side (&optional question)
