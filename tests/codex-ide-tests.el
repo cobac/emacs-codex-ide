@@ -10013,6 +10013,33 @@
         (kill-buffer buffer))
       (delete-directory directory))))
 
+(ert-deftest codex-ide-rename-session-buffer-reports-persistence-failure ()
+  (let* ((buffer (generate-new-buffer "codex-default"))
+         (session
+          (make-codex-ide-session
+           :buffer buffer
+           :process 'fake-process
+           :thread-id "thread-1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (setq-local codex-ide--session session)
+          (cl-letf (((symbol-function 'process-live-p)
+                     (lambda (process)
+                       (eq process 'fake-process)))
+                    ((symbol-function 'codex-ide--set-thread-name)
+                     (lambda (&rest _)
+                       (error "Request failed"))))
+            (let ((err
+                   (should-error
+                    (codex-ide-rename-session-buffer "Local name")
+                    :type 'user-error)))
+              (should
+               (string-match-p
+                "renamed locally.*Request failed"
+                (error-message-string err))))
+            (should (equal (buffer-name buffer) "Local name"))))
+      (kill-buffer buffer))))
+
 (ert-deftest codex-ide-restore-session-buffer-name-uses-thread-metadata ()
   (let* ((buffer (generate-new-buffer "codex-default"))
          (session (make-codex-ide-session :buffer buffer)))
