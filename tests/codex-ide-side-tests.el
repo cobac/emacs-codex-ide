@@ -188,6 +188,56 @@
             (should-not
              (codex-ide--session-metadata-get parent :side-session))))))))
 
+(ert-deftest codex-ide-side-process-crash-keeps-diagnostics-and-return-action ()
+  (let ((project-dir (codex-ide-test--make-temp-project)))
+    (codex-ide-test-with-fixture project-dir
+      (codex-ide-test-with-fake-processes
+        (let* ((parent-buffer (generate-new-buffer " *codex-parent*"))
+               (side-buffer (generate-new-buffer " *codex-side*"))
+               (parent
+                (make-codex-ide-session
+                 :buffer parent-buffer
+                 :directory project-dir
+                 :status "idle"))
+               (side (codex-ide--create-process-session side-buffer nil))
+               (process (codex-ide-session-process side))
+               (destroyed-count 0)
+               returned-to)
+          (codex-ide--session-metadata-put side :side-parent parent)
+          (codex-ide--session-metadata-put parent :side-session side)
+          (with-current-buffer side-buffer
+            (setq-local codex-ide-side--parent parent)
+            (codex-ide-side-mode 1))
+          (let ((codex-ide-session-event-hook
+                 (list
+                  #'codex-ide-side--handle-session-event
+                  (lambda (event session _payload)
+                    (when (and (eq event 'destroyed)
+                               (eq session side))
+                      (setq destroyed-count (1+ destroyed-count)))))))
+            (setf (codex-ide-test-process-live process) nil)
+            (codex-ide--process-sentinel process "failed\n")
+            (should (= destroyed-count 1))
+            (should-not
+             (codex-ide--session-metadata-get parent :side-session))
+            (should-not (memq side codex-ide--sessions))
+            (should (buffer-live-p side-buffer))
+            (with-current-buffer side-buffer
+              (should codex-ide-side-mode)
+              (should (eq (codex-ide-side--parent side) parent))
+              (should (string-match-p
+                       "Codex process exited"
+                       (buffer-string)))
+              (cl-letf (((symbol-function 'pop-to-buffer)
+                         (lambda (buffer &rest _args)
+                           (setq returned-to buffer))))
+                (codex-ide-side-return)))
+            (should (= destroyed-count 1))
+            (should (eq returned-to parent-buffer))
+            (should-not (buffer-live-p side-buffer)))
+          (when (buffer-live-p parent-buffer)
+            (kill-buffer parent-buffer)))))))
+
 (ert-deftest codex-ide-default-session-selection-excludes-side-conversations ()
   (let* ((directory (codex-ide--normalize-directory "/tmp/project"))
          (parent

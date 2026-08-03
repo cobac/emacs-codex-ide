@@ -188,29 +188,31 @@
       (remhash directory codex-ide--active-buffer-objects))
     (codex-ide--maybe-disable-active-buffer-tracking)))
 
+(defun codex-ide--finalize-session (session)
+  "Emit SESSION's destruction event and remove its state exactly once."
+  (when (memq session codex-ide--sessions)
+    (codex-ide--run-session-event
+     'destroyed
+     session
+     :directory (codex-ide-session-directory session)
+     :buffer (codex-ide-session-buffer session)
+     :thread-id (codex-ide-session-thread-id session)
+     :status (codex-ide-session-status session))
+    (codex-ide--cleanup-session session)
+    t))
+
 (defun codex-ide--teardown-session (session &optional kill-log-buffer)
   "Stop SESSION and clear its internal state.
 When KILL-LOG-BUFFER is non-nil, also kill SESSION's log buffer."
   (when session
     (let ((process (codex-ide-session-process session))
-          (stderr-process (codex-ide-session-stderr-process session))
-          (directory (codex-ide-session-directory session))
-          (buffer (codex-ide-session-buffer session))
-          (thread-id (codex-ide-session-thread-id session))
-          (status (codex-ide-session-status session)))
+          (stderr-process (codex-ide-session-stderr-process session)))
       (when (process-live-p process)
         (codex-ide-log-message session "Stopping process during session teardown")
         (delete-process process))
       (when (process-live-p stderr-process)
         (delete-process stderr-process))
-      (codex-ide--run-session-event
-       'destroyed
-       session
-       :directory directory
-       :buffer buffer
-       :thread-id thread-id
-       :status status)
-      (codex-ide--cleanup-session session)
+      (codex-ide--finalize-session session)
       (when kill-log-buffer
         (codex-ide--kill-log-buffer session)))))
 
@@ -727,7 +729,7 @@ protocol requests such as thread listing."
           (codex-ide--recover-from-session-error session classification)))
       (unless (process-live-p process)
         (codex-ide-log-message session "Process exited")
-        (codex-ide--cleanup-session session)))))
+        (codex-ide--finalize-session session)))))
 
 ;;;###autoload
 (defun codex-ide ()

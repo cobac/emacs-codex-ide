@@ -45,6 +45,9 @@ requests that mutation after this boundary."
   (make-sparse-keymap)
   "Mouse map for returning from a side conversation.")
 
+(defvar-local codex-ide-side--parent nil
+  "Parent session retained by the current side-conversation buffer.")
+
 (define-key codex-ide-side-return-header-map
             [header-line mouse-1]
             #'codex-ide-side-return)
@@ -74,6 +77,13 @@ requests that mutation after this boundary."
     (when (and (codex-ide--live-session-p side)
                (buffer-live-p (codex-ide-session-buffer side)))
       side)))
+
+(defun codex-ide-side--parent (side)
+  "Return SIDE's parent session, including after SIDE process cleanup."
+  (or (codex-ide--session-metadata-get side :side-parent)
+      (when-let* ((buffer (codex-ide-session-buffer side))
+                  ((buffer-live-p buffer)))
+        (buffer-local-value 'codex-ide-side--parent buffer))))
 
 (defun codex-ide-side--copy-config (parent side)
   "Copy PARENT's session-local configuration to SIDE."
@@ -144,7 +154,7 @@ requests that mutation after this boundary."
 
 (defun codex-ide-side--header-summary (session)
   "Return a side-conversation header summary for SESSION."
-  (when-let* ((parent (codex-ide--session-metadata-get session :side-parent)))
+  (when-let* ((parent (codex-ide-side--parent session)))
     (let* ((parent-buffer (codex-ide-session-buffer parent))
            (parent-name
             (if (buffer-live-p parent-buffer)
@@ -164,7 +174,7 @@ requests that mutation after this boundary."
 
 (defun codex-ide-side--clear-parent-link (side)
   "Remove SIDE from its parent's active side-conversation state."
-  (when-let* ((parent (codex-ide--session-metadata-get side :side-parent)))
+  (when-let* ((parent (codex-ide-side--parent side)))
     (when (eq (codex-ide--session-metadata-get parent :side-session)
               side)
       (codex-ide--session-metadata-put parent :side-session nil))
@@ -205,7 +215,7 @@ requests that mutation after this boundary."
 (defun codex-ide-side--handle-buffer-kill ()
   "Clean up the side conversation owned by the current buffer."
   (when-let* ((side (codex-ide--session-for-current-buffer)))
-    (when (codex-ide--side-session-p side)
+    (when (codex-ide-side--parent side)
       (codex-ide-side--request-cleanup side))))
 
 (defun codex-ide-side--display (side)
@@ -244,6 +254,7 @@ requests that mutation after this boundary."
     (codex-ide--session-metadata-put parent :side-session side)
     (codex-ide-side--copy-config parent side)
     (with-current-buffer buffer
+      (setq-local codex-ide-side--parent parent)
       (codex-ide-side-mode 1)
       (add-hook 'kill-buffer-hook
                 #'codex-ide-side--handle-buffer-kill
@@ -295,13 +306,10 @@ requests that mutation after this boundary."
   "Close the current side conversation and return to its parent."
   (interactive)
   (let* ((side (codex-ide--session-for-current-buffer))
-         (parent (and side
-                      (codex-ide--session-metadata-get
-                       side
-                       :side-parent)))
+         (parent (and side (codex-ide-side--parent side)))
          (side-buffer (and side (codex-ide-session-buffer side)))
          (parent-buffer (and parent (codex-ide-session-buffer parent))))
-    (unless (and side (codex-ide--side-session-p side))
+    (unless (and side parent (bound-and-true-p codex-ide-side-mode))
       (user-error "Current buffer is not a Codex side conversation"))
     (when (buffer-live-p side-buffer)
       (let ((kill-buffer-query-functions nil))
