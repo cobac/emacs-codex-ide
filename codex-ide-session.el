@@ -196,6 +196,15 @@
     (unless (equal name (codex-ide--session-default-buffer-name session))
       name)))
 
+(defun codex-ide--persist-session-buffer-name (session name)
+  "Persist SESSION's buffer NAME as its Codex thread name."
+  (unless (process-live-p (codex-ide-session-process session))
+    (error "Codex session process is not running"))
+  (let ((thread-id (codex-ide-session-thread-id session)))
+    (codex-ide--set-thread-name session thread-id name)
+    (codex-ide--session-metadata-put session :thread-name name)
+    name))
+
 (defun codex-ide--sync-session-buffer-name (session &optional name)
   "Persist SESSION's buffer NAME as its Codex thread name.
 When NAME is nil, persist only a custom buffer name."
@@ -208,10 +217,7 @@ When NAME is nil, persist only a custom buffer name."
                             session
                             :thread-name)))))
     (condition-case err
-        (progn
-          (codex-ide--set-thread-name session thread-id name)
-          (codex-ide--session-metadata-put session :thread-name name)
-          name)
+        (codex-ide--persist-session-buffer-name session name)
       (error
        (codex-ide-log-message
         session
@@ -250,7 +256,12 @@ With UNIQUE non-nil, generate a unique name when NEWNAME is already in use."
                  (eq (current-buffer) (codex-ide-session-buffer session)))
       (user-error "This command must be run from a Codex session buffer"))
     (let ((name (rename-buffer newname unique)))
-      (codex-ide--sync-session-buffer-name session name)
+      (condition-case err
+          (codex-ide--persist-session-buffer-name session name)
+        (error
+         (user-error
+          "Buffer renamed locally, but the thread name could not be persisted: %s"
+          (error-message-string err))))
       name)))
 
 (defun codex-ide--teardown-session (session &optional kill-log-buffer)
