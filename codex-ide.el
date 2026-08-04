@@ -252,7 +252,7 @@ When nil, inline diffs never start folded."
   :group 'codex-ide)
 
 ;;;###autoload
-(defcustom codex-ide-request-timeout 10
+(defcustom codex-ide-request-timeout 30
   "Seconds to wait for synchronous app-server responses."
   :type 'number
   :group 'codex-ide)

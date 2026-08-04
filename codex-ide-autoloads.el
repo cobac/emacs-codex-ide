@@ -98,7 +98,7 @@ When nil, inline diffs never start folded.")
 (defvar codex-ide-personality "pragmatic"
 "Personality for new or resumed Codex threads and later turns.")
 (custom-autoload 'codex-ide-personality "codex-ide" t)
-(defvar codex-ide-request-timeout 10
+(defvar codex-ide-request-timeout 30
 "Seconds to wait for synchronous app-server responses.")
 (custom-autoload 'codex-ide-request-timeout "codex-ide" t)
 (defvar codex-ide-log-max-lines 10000
