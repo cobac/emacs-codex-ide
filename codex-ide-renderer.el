@@ -141,6 +141,13 @@ without making the renderer depend on transcript state.")
                  (integer :tag "Maximum characters"))
   :group 'codex-ide)
 
+(defcustom codex-ide-renderer-markdown-show-code-block-fences nil
+  "Whether to show fenced code block delimiters in rendered markdown.
+When non-nil, opening fences such as ```elisp and closing ``` fences remain
+visible while the code block content is syntax highlighted."
+  :type 'boolean
+  :group 'codex-ide)
+
 (defcustom codex-ide-renderer-markdown-streaming-defer-delay 3.0
   "Seconds to hide trailing incomplete inline markdown while streaming.
 When nil or zero, trailing incomplete inline markdown is displayed
@@ -1974,6 +1981,13 @@ intentionally ignored."
   "Apply syntax highlighting to region START END using LANGUAGE."
   (codex-ide-renderer--fontify-code-block-region start end language))
 
+(defun codex-ide-renderer--markdown-code-fence-properties ()
+  "Return text properties for a rendered markdown code fence."
+  (append
+   (unless codex-ide-renderer-markdown-show-code-block-fences
+     '(display ""))
+   '(codex-ide-markdown t)))
+
 (defun codex-ide-renderer--render-fenced-code-blocks (start end)
   "Render fenced code blocks between START and END."
   (goto-char start)
@@ -1990,8 +2004,7 @@ intentionally ignored."
                                  end)))
           (add-text-properties
            fence-start code-start
-           '(display ""
-		     codex-ide-markdown t))
+           (codex-ide-renderer--markdown-code-fence-properties))
           (add-text-properties
            code-start closing-start
            '(codex-ide-markdown t
@@ -2007,8 +2020,7 @@ intentionally ignored."
              '(codex-ide-markdown-code-fontified t)))
           (add-text-properties
            closing-start closing-end
-           '(display ""
-		     codex-ide-markdown t))
+           (codex-ide-renderer--markdown-code-fence-properties))
           (goto-char closing-end))))))
 
 (defun codex-ide-renderer--streaming-open-fence-tail (start end)
@@ -2036,8 +2048,7 @@ intentionally ignored."
          (codex-ide-renderer--clear-markdown-properties fence-start end)
          (add-text-properties
           fence-start code-start
-          '(display ""
-		    codex-ide-markdown t))
+          (codex-ide-renderer--markdown-code-fence-properties))
          (when (< code-start end)
            (add-text-properties
             code-start end

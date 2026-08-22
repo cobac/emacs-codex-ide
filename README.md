@@ -110,6 +110,14 @@ Key bindings:
 - `M-p` and `M-n` cycle prompt history while point is in the active prompt.
 - `TAB` and `S-TAB` move between clickable buttons and file links.
 
+To keep opening and closing code block fences visible while retaining syntax
+highlighting, customize `codex-ide-renderer-markdown-show-code-block-fences`.
+Useful to prevent un-displayed fences from being yanked.
+
+```emacs-lisp
+(setq codex-ide-renderer-markdown-show-code-block-fences t)
+```
+
 ### Session diff buffer
 
 Codex IDE can show a canonical diff buffer for each session. Open it with

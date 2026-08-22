@@ -63,6 +63,23 @@ BODY may refer to the lexical variable `session'."
     (forward-line -1)
     (should (equal (get-text-property (point) 'display) ""))))
 
+(ert-deftest codex-ide-renderer-shows-fenced-code-block-delimiters-when-enabled ()
+  (with-temp-buffer
+    (let ((codex-ide-renderer-markdown-show-code-block-fences t))
+      (insert "```emacs-lisp\n(setq answer 42)\n```\n")
+      (codex-ide-renderer-render-markdown-region (point-min) (point-max) t)
+      (goto-char (point-min))
+      (should-not (get-text-property (point) 'display))
+      (should (get-text-property (point) 'codex-ide-markdown))
+      (search-forward "setq")
+      (should (memq 'font-lock-keyword-face
+                    (ensure-list
+                     (get-text-property (match-beginning 0) 'face))))
+      (forward-line 1)
+      (should (looking-at-p "```"))
+      (should-not (get-text-property (point) 'display))
+      (should (get-text-property (point) 'codex-ide-markdown)))))
+
 (ert-deftest codex-ide-renderer-renders-json-fenced-code-blocks-with-stock-mode ()
   (with-temp-buffer
     (insert "```json\n{\"tool\": true}\n```\n")
@@ -489,6 +506,20 @@ BODY may refer to the lexical variable `session'."
      (search-forward "```javascript")
      (should (equal (get-text-property (match-beginning 0) 'display) ""))
      (should-not (get-text-property (match-beginning 0) 'invisible)))))
+
+(ert-deftest codex-ide-renderer-streaming-shows-open-fence-when-enabled ()
+  (codex-ide-renderer-test-with-agent-message-buffer
+   (let ((codex-ide-renderer-markdown-show-code-block-fences t))
+     (insert "```emacs-lisp\n(setq answer 42)")
+     (codex-ide--render-current-agent-message-markdown-streaming session "msg-1")
+     (goto-char (point-min))
+     (should (looking-at-p "```emacs-lisp"))
+     (should-not (get-text-property (point) 'display))
+     (should (get-text-property (point) 'codex-ide-markdown))
+     (search-forward "setq")
+     (should (memq 'font-lock-keyword-face
+                   (ensure-list
+                    (get-text-property (match-beginning 0) 'face)))))))
 
 (ert-deftest codex-ide-renderer-streaming-does-not-render-inline-code-inside-open-fence ()
   (codex-ide-renderer-test-with-agent-message-buffer
