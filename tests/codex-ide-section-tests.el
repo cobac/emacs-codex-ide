@@ -260,6 +260,31 @@
         (should (overlay-get overlay 'cursor-intangible))
         (should-not (overlay-get overlay 'after-string))))))
 
+(ert-deftest codex-ide-section-restore-view-state-skips-collapsed-body ()
+  (with-temp-buffer
+    (codex-ide-section-mode)
+    (codex-ide-section-reset)
+    (let* ((first
+            (codex-ide-section-insert
+             'first 'first "First"
+             (lambda (_section)
+               (insert "first body\n"))
+             t))
+           (second
+            (codex-ide-section-insert
+             'second 'second "Second"
+             (lambda (_section)
+               (insert "second body\n"))
+             t))
+           (hidden-position (1+ (codex-ide-section-body-start first))))
+      (should (invisible-p hidden-position))
+      (codex-ide-section-restore-view-state
+       `((point-path . (missing))
+         (point . ,hidden-position))
+       #'codex-ide-section-type)
+      (should (= (point) (codex-ide-section-heading-start second)))
+      (should (eq (codex-ide-section-at-point) second)))))
+
 (ert-deftest codex-ide-section-move-end-of-line-stays-on-collapsed-heading ()
   (with-temp-buffer
     (codex-ide-section-mode)
