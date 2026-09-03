@@ -192,6 +192,23 @@ that can be compared with `equal' across rerenders."
             path (cdr path)))
     (and (null path) section)))
 
+(defun codex-ide-section--visible-position-at-or-after (position)
+  "Return a visible position at or after POSITION.
+Move past collapsed section bodies so point agrees with the entry displayed at
+the cursor after a rerender."
+  (let ((target position)
+        hidden-overlay)
+    (while
+        (setq hidden-overlay
+              (cl-find-if
+               (lambda (overlay)
+                 (and (overlay-get overlay 'codex-ide-section-hidden)
+                      (overlay-get overlay 'invisible)
+                      (< target (overlay-end overlay))))
+               (overlays-at target)))
+      (setq target (overlay-end hidden-overlay)))
+    target))
+
 (defun codex-ide-section-capture-view-state (identity-fn)
   "Capture fold and point state for sections in the current buffer.
 IDENTITY-FN is used to produce stable section path elements across rerenders."
@@ -238,6 +255,7 @@ IDENTITY-FN must produce the same identities used when STATE was captured."
                           (1- (codex-ide-section-end section)))))
             (min (or (alist-get 'point state) (point-min))
                  (point-max))))
+    (setq target (codex-ide-section--visible-position-at-or-after target))
     (goto-char target)
     (dolist (window (get-buffer-window-list (current-buffer) nil 0))
       (when (window-live-p window)
